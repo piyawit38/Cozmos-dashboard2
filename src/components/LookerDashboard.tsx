@@ -1,0 +1,594 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { DatabaseState, User, SleepDiary, DailyFactors, Assessment, WellnessUsage, Journal } from '../types';
+import { 
+  ResponsiveContainer, LineChart, Line, BarChart as ReBarChart, Bar, 
+  XAxis, YAxis, Tooltip, CartesianGrid, Legend, ScatterChart, Scatter, 
+  Cell, PieChart, Pie 
+} from 'recharts';
+import { 
+  LayoutGrid, Heart, Sparkles, AlertCircle, RefreshCw, Compass 
+} from 'lucide-react';
+import { motion } from 'motion/react';
+
+interface LookerDashboardProps {
+  database: DatabaseState;
+  activePatientId: string;
+}
+
+// Helper: get patient display name
+const getPatientName = (users: User[], patientId: string): string => {
+  const user = users.find(u => u.patientId === patientId);
+  if (!user) return patientId;
+  // Optional: custom nicknames
+  if (user.patientId === 'CZ-1001') return 'คุณวินัย';
+  if (user.patientId === 'CZ-1002') return 'คุณป้ามะลิ';
+  if (user.patientId === 'CZ-1003') return 'คุณสมชาย';
+  return user.patientId;
+};
+
+// Type for API response
+interface GeminiReportResponse {
+  report?: string;
+  error?: string;
+}
+
+export default function LookerDashboard({ database, activePatientId }: LookerDashboardProps) {
+  const [activePage, setActivePage] = useState<number>(1);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [aiReport, setAiReport] = useState<string>('');
+  const [reportError, setReportError] = useState('');
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // ---------- Memoized calculations ----------
+  const totalUsers = database.users.length;
+
+  const avgIsi = useMemo(() => {
+    if (!database.assessments.length) return 0;
+    const sum = database.assessments.reduce((s, a) => s + a.isi, 0);
+    return Number((sum / database.assessments.length).toFixed(1));
+  }, [database.assessments]);
+
+  const avgEss = useMemo(() => {
+    if (!database.assessments.length) return 0;
+    const sum = database.assessments.reduce((s, a) => s + a.ess, 0);
+    return Number((sum / database.assessments.length).toFixed(1));
+  }, [database.assessments]);
+
+  const avgEfficiency = useMemo(() => {
+    if (!database.sleepDiary.length) return 0;
+    const sum = database.sleepDiary.reduce((s, d) => s + d.sleepEfficiency, 0);
+    return Math.round(sum / database.sleepDiary.length);
+  }, [database.sleepDiary]);
+
+  const avgStress = useMemo(() => {
+    if (!database.dailyFactors.length) return 0;
+    const sum = database.dailyFactors.reduce((s, f) => s + f.stressScore, 0);
+    return Number((sum / database.dailyFactors.length).toFixed(1));
+  }, [database.dailyFactors]);
+
+  // Page 2 data: sleep analytics for selected patient
+  const patientDiaries = useMemo(() => {
+    return database.sleepDiary
+      .filter(d => d.patientId === activePatientId)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [database.sleepDiary, activePatientId]);
+
+  const patientAssessments = useMemo(() => {
+    return database.assessments
+      .filter(a => a.patientId === activePatientId)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [database.assessments, activePatientId]);
+
+  const sleepAnalyticsData = useMemo(() => {
+    return patientDiaries.map(diary => {
+      const matchingAss = patientAssessments.find(a => a.date === diary.date) || patientAssessments[0];
+      return {
+        dateShort: diary.date.slice(-5),
+        "ชั่วโมงการนอน": diary.sleepDuration,
+        "ประสิทธิภาพการหลับ (%)": diary.sleepEfficiency,
+        "ISI Trend": matchingAss ? matchingAss.isi : 12,
+        "ESS Trend": matchingAss ? matchingAss.ess : 8,
+      };
+    });
+  }, [patientDiaries, patientAssessments]);
+
+  // Page 3: ISI distribution
+  const isiDistData = useMemo(() => {
+    let normal = 0, mild = 0, moderate = 0, severe = 0;
+    database.assessments.forEach(a => {
+      if (a.isi <= 7) normal++;
+      else if (a.isi <= 14) mild++;
+      else if (a.isi <= 21) moderate++;
+      else severe++;
+    });
+    return [
+      { name: 'ปกติ (0-7)', count: normal, fill: '#4ade80' },
+      { name: 'เล็กน้อย (8-14)', count: mild, fill: '#facc15' },
+      { name: 'ปานกลาง (15-21)', count: moderate, fill: '#fb923c' },
+      { name: 'รุนแรง (22-28)', count: severe, fill: '#f87171' }
+    ].filter(d => d.count > 0); // hide zero categories
+  }, [database.assessments]);
+
+  // Page 4: correlation data – only include complete pairs
+  const correlationData = useMemo(() => {
+    const result: any[] = [];
+    database.sleepDiary.forEach(diary => {
+      const factor = database.dailyFactors.find(f => f.patientId === diary.patientId && f.date === diary.date);
+      const assessment = database.assessments.find(a => a.patientId === diary.patientId);
+      // Only include if we have both factor and assessment for better accuracy
+      if (factor && assessment) {
+        result.push({
+          stress: factor.stressScore,
+          isi: assessment.isi,
+          caffeine: factor.caffeine,
+          sleepDuration: diary.sleepDuration,
+          screenTime: factor.screenTime,
+          sleepEfficiency: diary.sleepEfficiency,
+          patientId: diary.patientId
+        });
+      }
+    });
+    return result;
+  }, [database.sleepDiary, database.dailyFactors, database.assessments]);
+
+  // Page 5: wellness usage stats
+  const wellnessStatsData = useMemo(() => {
+    let whiteSum = 0, rainSum = 0, oceanSum = 0, forestSum = 0, breathingSum = 0, dumpSum = 0;
+    database.wellnessUsage.forEach(w => {
+      whiteSum += w.whiteNoise;
+      rainSum += w.rainSound;
+      oceanSum += w.oceanSound;
+      forestSum += w.forestSound || 0;
+      breathingSum += w.breathingSession;
+      dumpSum += w.brainDump || 0;
+    });
+    return [
+      { name: 'White Noise (นาที)', value: whiteSum, fill: '#f1b32d' },
+      { name: 'ฝนตก (นาที)', value: rainSum, fill: '#3d5a80' },
+      { name: 'คลื่นทะเล (นาที)', value: oceanSum, fill: '#98c1d9' },
+      { name: 'พนาไพร (นาที)', value: forestSum, fill: '#4a6fa5' },
+      { name: 'ฝึกการหายใจ (นาที)', value: breathingSum * 5, fill: '#e9c46a' },
+      { name: 'เขียนทิ้งระเบิดสมอง (นาที)', value: dumpSum * 5, fill: '#2d426b' }
+    ].filter(d => d.value > 0);
+  }, [database.wellnessUsage]);
+
+  // Page 6: mood distribution
+  const moodData = useMemo(() => {
+    let pos = 0, neu = 0, sad = 0, str = 0;
+    database.journals.forEach(j => {
+      if (j.mood === 'Positive') pos++;
+      else if (j.mood === 'Neutral') neu++;
+      else if (j.mood === 'Sad') sad++;
+      else str++;
+    });
+    return [
+      { name: 'Positive 😊', value: pos, fill: '#4ade80' },
+      { name: 'Neutral 😐', value: neu, fill: '#94a3b8' },
+      { name: 'Sad 😔', value: sad, fill: '#3b82f6' },
+      { name: 'Stress 😫', value: str, fill: '#f87171' }
+    ].filter(d => d.value > 0);
+  }, [database.journals]);
+
+  // ---------- API call with abort and fallback ----------
+  const fetchWeeklyReport = useCallback(async () => {
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setLoadingReport(true);
+    setAiReport('');
+    setReportError('');
+
+    try {
+      const response = await fetch('/api/gemini/generate-weekly-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientId: activePatientId }),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data: GeminiReportResponse = await response.json();
+      if (data.error) throw new Error(data.error);
+      
+      setAiReport(data.report || 'ไม่พบสรุปรายงานสำหรับสมาชิกครอบครัวนี้');
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Fetch aborted');
+        return;
+      }
+      console.error(err);
+      // Friendly fallback message
+      setReportError(
+        'ไม่สามารถเชื่อมต่อกับระบบ AI ได้ในขณะนี้ กรุณาลองอีกครั้งภายหลัง หรือตรวจสอบว่า backend server ทำงานอยู่'
+      );
+      // Optional: fallback mock report for demo (remove in production)
+      if (process.env.NODE_ENV === 'development') {
+        setAiReport('[โหมดพัฒนา] รายงานตัวอย่าง: สมาชิกในครอบครัวมีแนวโน้มความเครียดลดลง 10% เมื่อเทียบกับสัปดาห์ที่ผ่านมา แนะนำฝึกหายใจก่อนนอนอย่างน้อย 5 นาที');
+      }
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      setLoadingReport(false);
+    }
+  }, [activePatientId]);
+
+  // Trigger report fetch when page 6 is active or patient changes
+  useEffect(() => {
+    if (activePage === 6) {
+      fetchWeeklyReport();
+    }
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [activePage, activePatientId, fetchWeeklyReport]);
+
+  // ---------- Render helper for each page (keeps JSX clean) ----------
+  const renderPage1 = () => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 1 : บทวิเคราะห์ภาพรวมประจำครอบครัว</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">ดึงค่าประเมินเฉลี่ยสะสมของสมาชิกทุกคนในครอบครัวเพื่อดูสถิติภาพรวม</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">สมาชิกทั้งหมด</span>
+          <strong className="text-3xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{totalUsers}</strong>
+          <span className="text-[9px] text-green-600 font-semibold">👤 100% ปกป้อง</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ISI คะแนนเฉลี่ย</span>
+          <strong className="text-3xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgIsi}</strong>
+          <span className="text-[9px] text-orange-500 font-semibold">⚠️ ระดับปานกลาง</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ESS ง่วงนอนเฉลี่ย</span>
+          <strong className="text-3xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEss}</strong>
+          <span className="text-[9px] text-yellow-600 font-semibold">⚡ อาการล้าสะสม</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">Sleep Efficiency</span>
+          <strong className="text-3xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEfficiency}%</strong>
+          <span className="text-[9px] text-green-600 font-semibold">🟢 สถิติคงที่</span>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ระดับความเครียด</span>
+          <strong className="text-3xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgStress}</strong>
+          <span className="text-[9px] text-red-500 font-semibold">🔴 ควรปรับปรุง</span>
+        </div>
+      </div>
+
+      <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <h5 className="font-semibold text-sm text-sleep-blue-950 flex items-center gap-1">
+            <Heart className="w-4 h-4 text-red-500 animate-pulse" />
+            สรุปข้อคิดเห็นภาพรวมประจำบ้าน
+          </h5>
+          <p className="text-xs text-sleep-blue-600 font-light leading-relaxed max-w-2xl">
+            แปลผลภาพรวมจากพฤติกรรมคนในบ้าน: ดัชนีเฉลี่ยชี้ว่าสมาชิกส่วนใหญ่มีสุขอนามัยการนอนหลับค่อนข้างดีแต่อาจมีความเหนื่อยล้าสะสมบางสัปดาห์ การรักษาวินัยการจัดเตียง อุณหภูมิห้องนอน และใช้วิธี Zodiac Sleep Sync จะช่วยส่งเสริมให้นอนหลับได้สนิทยิ่งขึ้นครับ
+          </p>
+        </div>
+        <div className="text-right flex flex-col justify-center shrink-0">
+          <span className="text-[10px] text-sleep-blue-400 font-mono">DATABASE ENGINE</span>
+          <strong className="text-xs font-semibold text-sleep-blue-900 uppercase">Google Sheets Live Sync</strong>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPage2 = () => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 2 : สถิติและรายละเอียดพฤติกรรมการนอนในบ้าน</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">แสดงสถิติกราฟเส้นชั่วโมงการนอนและเปรียบเทียบอาการคะแนนประเมินของสมาชิก</p>
+      </div>
+
+      {sleepAnalyticsData.length === 0 ? (
+        <div className="text-center py-10 bg-white rounded-2xl border border-dashed text-xs text-sleep-blue-600">
+          ไม่มีประวัติการส่งไดอารี่ของสมาชิกคนนี้ ลองจดบันทึกพฤติกรรมก่อนนะครับ
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm">
+            <h5 className="font-semibold text-xs text-sleep-blue-900 mb-3 uppercase tracking-wider text-center">กราฟ 1: ชั่วโมงการนอนรายวัน</h5>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sleepAnalyticsData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis dataKey="dateShort" stroke="#64748B" style={{ fontSize: '10px' }} />
+                  <YAxis domain={[3, 10]} stroke="#64748B" style={{ fontSize: '10px' }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="ชั่วโมงการนอน" stroke="#f1b32d" strokeWidth={3} activeDot={{ r: 8 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm">
+            <h5 className="font-semibold text-xs text-sleep-blue-900 mb-3 uppercase tracking-wider text-center">กราฟ 2: ดัชนีความเครียดและง่วงนอน (ISI & ESS)</h5>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sleepAnalyticsData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis dataKey="dateShort" stroke="#64748B" style={{ fontSize: '10px' }} />
+                  <YAxis stroke="#64748B" style={{ fontSize: '10px' }} />
+                  <Tooltip />
+                  <Legend wrapperStyle={{ fontSize: '10px' }} />
+                  <Line type="monotone" dataKey="ISI Trend" stroke="#ef4444" strokeWidth={2} />
+                  <Line type="monotone" dataKey="ESS Trend" stroke="#3b82f6" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderPage3 = () => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 3 : การเฝ้าระวังความรุนแรงนอนไม่หลับ (ISI)</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">สัดส่วนของเกณฑ์คลินิก ISI แยกตามระดับความรุนแรง</p>
+      </div>
+
+      <div className="bg-white p-5 rounded-3xl border border-sleep-blue-100 shadow-sm">
+        <h5 className="font-semibold text-xs text-sleep-blue-950 mb-4 text-center">เกณฑ์กระจายโรค ISI Scale</h5>
+        <div className="h-64 max-w-lg mx-auto">
+          <ResponsiveContainer width="100%" height="100%">
+            <ReBarChart data={isiDistData}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+              <XAxis dataKey="name" stroke="#64748B" style={{ fontSize: '11px' }} />
+              <YAxis stroke="#64748B" allowDecimals={false} style={{ fontSize: '11px' }} />
+              <Tooltip />
+              <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                {isiDistData.map((entry) => (
+                  <Cell key={entry.name} fill={entry.fill} />
+                ))}
+              </Bar>
+            </ReBarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-sleep-blue-50 text-center text-xs">
+          <div><span className="text-green-500 font-extrabold">● ปกติ</span><p className="text-sleep-blue-600">ไม่มีโรคแทรกซ้อน</p></div>
+          <div><span className="text-yellow-500 font-extrabold">● เล็กน้อย</span><p className="text-sleep-blue-600">ความเสี่ยงสุขวิทยา</p></div>
+          <div><span className="text-orange-500 font-extrabold">● ปานกลาง</span><p className="text-sleep-blue-600">รบกวนงานกลางวัน</p></div>
+          <div><span className="text-red-500 font-extrabold">● รุนแรง</span><p className="text-sleep-blue-600">ปัญหานอนติดขัด</p></div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPage4 = () => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 4 : ปัจจัยพฤติกรรม (Correlation)</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">ความสัมพันธ์ระหว่างความเครียด คาเฟอีน หน้าจอ กับคุณภาพการนอน</p>
+      </div>
+      {correlationData.length === 0 ? (
+        <div className="text-center py-10 bg-white rounded-2xl border border-dashed text-xs text-sleep-blue-600">
+          ยังไม่มีข้อมูลที่สมบูรณ์สำหรับการวิเคราะห์สหสัมพันธ์ (ต้องการทั้ง sleep diary, daily factors และ assessments)
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">1. ความเครียด vs ISI</h5>
+            <div className="h-40">
+              <ResponsiveContainer>
+                <ScatterChart>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="stress" domain={[0,10]} stroke="#94a3b8" />
+                  <YAxis type="number" dataKey="isi" domain={[0,24]} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Scatter data={correlationData} fill="#ef4444" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">2. คาเฟอีน vs ชั่วโมงนอน</h5>
+            <div className="h-40">
+              <ResponsiveContainer>
+                <ScatterChart>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="caffeine" domain={[0,5]} stroke="#94a3b8" />
+                  <YAxis type="number" dataKey="sleepDuration" domain={[3,10]} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Scatter data={correlationData} fill="#b45309" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">3. หน้าจอ vs ประสิทธิภาพหลับ</h5>
+            <div className="h-40">
+              <ResponsiveContainer>
+                <ScatterChart>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="screenTime" domain={[0,8]} stroke="#94a3b8" />
+                  <YAxis type="number" dataKey="sleepEfficiency" domain={[50,100]} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Scatter data={correlationData} fill="#3b82f6" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderPage5 = () => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 5 : สถิติการใช้งานเครื่องมือบำบัดนอนหลับ</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">ปริมาณนาทีและจำนวนครั้งของการฝึกหายใจ เสียงคลื่น ฯลฯ</p>
+      </div>
+      <div className="bg-white p-5 rounded-3xl border shadow-sm">
+        <h5 className="font-semibold text-xs text-center mb-4">สัดส่วนนาทีรักษาสมดุล</h5>
+        <div className="h-64">
+          <ResponsiveContainer>
+            <ReBarChart data={wellnessStatsData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" stroke="#64748B" style={{ fontSize: '11px' }} />
+              <YAxis type="category" dataKey="name" width={170} stroke="#64748B" style={{ fontSize: '11px' }} />
+              <Tooltip />
+              <Bar dataKey="value" radius={[0,6,6,0]}>
+                {wellnessStatsData.map(entry => (
+                  <Cell key={entry.name} fill={entry.fill} />
+                ))}
+              </Bar>
+            </ReBarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderPage6 = () => (
+    <div className="space-y-6">
+      <div className="border-b pb-3 flex flex-col sm:flex-row justify-between gap-4">
+        <div>
+          <h4 className="font-semibold text-lg">หน้า 6 : AI Reflection รายงานอัจฉริยะ</h4>
+          <p className="text-xs text-sleep-blue-500">ตรวจจับแนวโน้มอารมณ์และให้คำปรึกษาจาก Gemini LLM</p>
+        </div>
+        <button
+          onClick={fetchWeeklyReport}
+          disabled={loadingReport}
+          aria-label="ขอรายงาน AI ใหม่"
+          className="bg-sleep-blue-900 hover:bg-sleep-blue-800 text-white text-xs font-semibold px-3 py-1.5 rounded-xl inline-flex items-center gap-1 shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingReport ? 'animate-spin' : ''}`} />
+          ขอรายงานใหม่
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-4 rounded-2xl border shadow-sm text-center">
+          <h5 className="font-semibold text-xs mb-2">สัดส่วนอารมณ์ไดอารี่</h5>
+          <div className="h-40 w-full">
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={moodData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={3} dataKey="value">
+                  {moodData.map(entry => (
+                    <Cell key={entry.name} fill={entry.fill} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] pt-2 border-t mt-2">
+            {moodData.map(m => (
+              <div key={m.name}>{m.name}</div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-sleep-gold-50 border border-sleep-gold-300 p-5 rounded-3xl col-span-2 space-y-4">
+          <div className="flex justify-between items-center">
+            <h5 className="font-semibold text-sm flex items-center gap-1">
+              <Sparkles className="w-4 h-4 text-sleep-gold-500" />
+              COZMOS WEEKLY AI REPORT
+            </h5>
+            <span className="text-[10px] bg-sleep-blue-900 text-white px-2 py-0.5 rounded">อัจฉริยะ</span>
+          </div>
+
+          {loadingReport ? (
+            <div className="py-10 text-center">
+              <Compass className="w-8 h-8 animate-spin mx-auto text-sleep-blue-900" />
+              <p className="text-xs mt-2">กำลังประมวลผลรายงานประจำสัปดาห์...</p>
+            </div>
+          ) : reportError ? (
+            <div className="p-3 bg-red-50 border border-red-200 text-xs text-red-500 rounded-xl flex gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{reportError}</span>
+            </div>
+          ) : (
+            <div className="text-xs text-sleep-blue-950 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap space-y-2">
+              {aiReport || 'ยังไม่มีรายงาน กดปุ่ม "ขอรายงานใหม่" เพื่อสร้างรายงานจากข้อมูลล่าสุด'}
+            </div>
+          )}
+          <div className="text-[9px] text-sleep-blue-600 italic">
+            *รายงานอิงจากข้อมูลการนอน ความเครียด และไดอารี่ของสมาชิกรหัส {activePatientId}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6" id="looker-dashboard">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-semibold text-sleep-blue-900 flex items-center gap-2">
+            <LayoutGrid className="w-6 h-6 text-sleep-gold-500" />
+            แดชบอร์ดวิเคราะห์สุขภาพครอบครัวเชิงลึก
+          </h2>
+        </div>
+
+        {/* Page Navigation */}
+        <div className="flex bg-sleep-blue-900 text-white rounded-2xl p-1 gap-1 flex-wrap shadow">
+          {[1,2,3,4,5,6].map(page => (
+            <button
+              key={page}
+              onClick={() => setActivePage(page)}
+              aria-label={`ไปหน้า ${page}`}
+              className={`px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                activePage === page 
+                  ? 'bg-sleep-gold-500 text-[#0B1026] shadow' 
+                  : 'hover:bg-white/10'
+              }`}
+            >
+              หน้า {page}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Canvas */}
+      <div className="bg-white border-3 border-sleep-blue-900 rounded-3xl overflow-hidden shadow-lg min-h-[480px]">
+        <div className="bg-sleep-blue-950 text-white p-4 px-6 flex justify-between items-center flex-col sm:flex-row gap-3 border-b border-sleep-blue-900">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+            <h3 className="font-mono text-xs text-sleep-gold-400 font-bold tracking-wider">
+              รายงานวิเคราะห์ข้อมูลสุขภาพการนอน / หน้า {activePage} จาก 6
+            </h3>
+          </div>
+          <div className="text-xs font-light text-sleep-blue-300">
+            วิเคราะห์ครอบครัว รหัส: <strong className="text-white bg-white/10 px-2 py-0.5 rounded">{activePatientId}</strong>
+          </div>
+        </div>
+
+        <div className="p-6 bg-sleep-cream/40 min-h-[440px]">
+          {activePage === 1 && renderPage1()}
+          {activePage === 2 && renderPage2()}
+          {activePage === 3 && renderPage3()}
+          {activePage === 4 && renderPage4()}
+          {activePage === 5 && renderPage5()}
+          {activePage === 6 && renderPage6()}
+        </div>
+      </div>
+    </div>
+  );
+}

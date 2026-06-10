@@ -1,0 +1,533 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import {GoogleGenAI, Type} from '@google/genai';
+import {createServer as createViteServer} from 'vite';
+import dotenv from 'dotenv';
+import { DatabaseState, User, SleepDiary, DailyFactors, Assessment, WellnessUsage, Journal } from './src/types.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = 3000;
+
+app.use(express.json());
+
+// Initialize Gemini Client safely
+let ai: GoogleGenAI | null = null;
+try {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') {
+    ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+    console.log("Successfully initialized Gemini Client.");
+  } else {
+    console.log("GEMINI_API_KEY not supplied. Gemini calls will simulate responses.");
+  }
+} catch (error) {
+  console.error("Error setting up Gemini Client:", error);
+}
+
+const DB_FILE_PATH = path.join(process.cwd(), 'sleep_data_store.json');
+
+// Prepopulate data with realistic clinical logs for 3 patient personas to ensure beautiful dashboards
+const INITIAL_DATABASE: DatabaseState = {
+  users: [
+    {
+      patientId: "CZ-1001",
+      age: 28,
+      gender: "ชาย",
+      birthDate: "1998-05-15",
+      weight: 85,
+      height: 175,
+      bmi: 27.8, // Overweight
+      chronicDiseases: "ภูมิแพ้อากาศ"
+    },
+    {
+      patientId: "CZ-1002",
+      age: 63,
+      gender: "หญิง",
+      birthDate: "1963-11-20",
+      weight: 54,
+      height: 158,
+      bmi: 21.6, // Normal
+      chronicDiseases: "ความดันโลหิตสูง"
+    },
+    {
+      patientId: "CZ-1003",
+      age: 35,
+      gender: "ชาย",
+      birthDate: "1991-02-10",
+      weight: 68,
+      height: 172,
+      bmi: 23.0, // Normal
+      chronicDiseases: "ไม่มี"
+    }
+  ],
+  sleepDiary: [
+    // CZ-1001: 5 days of sleep logs
+    { patientId: "CZ-1001", date: "2026-06-05", bedTime: "23:45", wakeTime: "06:30", sleepDuration: 6.0, sleepEfficiency: 85.0, awakenings: 2 },
+    { patientId: "CZ-1001", date: "2026-06-06", bedTime: "00:15", wakeTime: "06:00", sleepDuration: 5.2, sleepEfficiency: 79.0, awakenings: 3 },
+    { patientId: "CZ-1001", date: "2026-06-07", bedTime: "01:30", wakeTime: "07:00", sleepDuration: 5.0, sleepEfficiency: 75.0, awakenings: 4 },
+    { patientId: "CZ-1001", date: "2026-06-08", bedTime: "23:50", wakeTime: "06:30", sleepDuration: 6.2, sleepEfficiency: 87.0, awakenings: 1 },
+    { patientId: "CZ-1001", date: "2026-06-09", bedTime: "01:10", wakeTime: "06:45", sleepDuration: 5.1, sleepEfficiency: 78.0, awakenings: 3 },
+
+    // CZ-1002: 5 days of sleep logs
+    { patientId: "CZ-1002", date: "2026-06-05", bedTime: "22:00", wakeTime: "05:15", sleepDuration: 6.5, sleepEfficiency: 88.0, awakenings: 2 },
+    { patientId: "CZ-1002", date: "2026-06-06", bedTime: "22:30", wakeTime: "05:00", sleepDuration: 6.0, sleepEfficiency: 84.0, awakenings: 3 },
+    { patientId: "CZ-1002", date: "2026-06-07", bedTime: "23:15", wakeTime: "06:00", sleepDuration: 6.2, sleepEfficiency: 81.0, awakenings: 4 },
+    { patientId: "CZ-1002", date: "2026-06-08", bedTime: "21:45", wakeTime: "05:30", sleepDuration: 7.2, sleepEfficiency: 91.0, awakenings: 1 },
+    { patientId: "CZ-1002", date: "2026-06-09", bedTime: "22:15", wakeTime: "05:00", sleepDuration: 6.1, sleepEfficiency: 85.0, awakenings: 3 },
+
+    // CZ-1003: 5 days of sleep logs
+    { patientId: "CZ-1003", date: "2026-06-05", bedTime: "23:00", wakeTime: "07:00", sleepDuration: 7.5, sleepEfficiency: 93.0, awakenings: 1 },
+    { patientId: "CZ-1003", date: "2026-06-06", bedTime: "23:30", wakeTime: "07:30", sleepDuration: 7.2, sleepEfficiency: 90.0, awakenings: 1 },
+    { patientId: "CZ-1003", date: "2026-06-07", bedTime: "22:30", wakeTime: "06:30", sleepDuration: 7.5, sleepEfficiency: 94.0, awakenings: 0 },
+    { patientId: "CZ-1003", date: "2026-06-08", bedTime: "22:45", wakeTime: "06:45", sleepDuration: 7.5, sleepEfficiency: 94.0, awakenings: 0 },
+    { patientId: "CZ-1003", date: "2026-06-09", bedTime: "23:15", wakeTime: "07:00", sleepDuration: 7.2, sleepEfficiency: 91.0, awakenings: 2 }
+  ],
+  dailyFactors: [
+    // CZ-1001
+    { patientId: "CZ-1001", date: "2026-06-05", stressScore: 7, caffeine: 3, exercise: 0, screenTime: 4.5, napDuration: 0 },
+    { patientId: "CZ-1001", date: "2026-06-06", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 5.0, napDuration: 30 },
+    { patientId: "CZ-1001", date: "2026-06-07", stressScore: 9, caffeine: 3, exercise: 0, screenTime: 6.0, napDuration: 20 },
+    { patientId: "CZ-1001", date: "2026-06-08", stressScore: 5, caffeine: 2, exercise: 30, screenTime: 2.5, napDuration: 0 },
+    { patientId: "CZ-1001", date: "2026-06-09", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 4.8, napDuration: 40 },
+
+    // CZ-1002
+    { patientId: "CZ-1002", date: "2026-06-05", stressScore: 4, caffeine: 1, exercise: 20, screenTime: 1.5, napDuration: 15 },
+    { patientId: "CZ-1002", date: "2026-06-06", stressScore: 5, caffeine: 2, exercise: 15, screenTime: 2.0, napDuration: 20 },
+    { patientId: "CZ-1002", date: "2026-06-07", stressScore: 6, caffeine: 2, exercise: 0, screenTime: 3.5, napDuration: 45 },
+    { patientId: "CZ-1002", date: "2026-06-08", stressScore: 2, caffeine: 1, exercise: 30, screenTime: 1.0, napDuration: 0 },
+    { patientId: "CZ-1002", date: "2026-06-09", stressScore: 5, caffeine: 3, exercise: 10, screenTime: 2.2, napDuration: 30 },
+
+    // CZ-1003
+    { patientId: "CZ-1003", date: "2026-06-05", stressScore: 3, caffeine: 1, exercise: 45, screenTime: 2.0, napDuration: 0 },
+    { patientId: "CZ-1003", date: "2026-06-06", stressScore: 4, caffeine: 2, exercise: 50, screenTime: 1.8, napDuration: 0 },
+    { patientId: "CZ-1003", date: "2026-06-07", stressScore: 2, caffeine: 1, exercise: 60, screenTime: 1.5, napDuration: 0 },
+    { patientId: "CZ-1003", date: "2026-06-08", stressScore: 3, caffeine: 1, exercise: 40, screenTime: 2.0, napDuration: 0 },
+    { patientId: "CZ-1003", date: "2026-06-09", stressScore: 4, caffeine: 1, exercise: 30, screenTime: 2.5, napDuration: 0 }
+  ],
+  assessments: [
+    { patientId: "CZ-1001", date: "2026-06-05", isi: 16, ess: 13, stopBang: 4, riskLevel: "ปานกลาง" },
+    { patientId: "CZ-1002", date: "2026-06-05", isi: 19, ess: 8, stopBang: 2, riskLevel: "เล็กน้อย" },
+    { patientId: "CZ-1003", date: "2026-06-05", isi: 6, ess: 5, stopBang: 1, riskLevel: "ปกติ" }
+  ],
+  wellnessUsage: [
+    // CZ-1001
+    { patientId: "CZ-1001", date: "2026-06-05", zodiacType: "ไฟ", whiteNoise: 0, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
+    { patientId: "CZ-1001", date: "2026-06-06", zodiacType: "ไฟ", whiteNoise: 15, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 1 },
+    { patientId: "CZ-1001", date: "2026-06-07", zodiacType: "ไฟ", whiteNoise: 20, rainSound: 0, oceanSound: 5, forestSound: 0, breathingSession: 2, brainDump: 1 },
+    { patientId: "CZ-1001", date: "2026-06-08", zodiacType: "ไฟ", whiteNoise: 0, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 0 },
+    { patientId: "CZ-1001", date: "2026-06-09", zodiacType: "ไฟ", whiteNoise: 10, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
+
+    // CZ-1002
+    { patientId: "CZ-1002", date: "2026-06-05", zodiacType: "ดิน", whiteNoise: 30, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 0 },
+    { patientId: "CZ-1002", date: "2026-06-06", zodiacType: "ดิน", whiteNoise: 45, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 0 },
+    { patientId: "CZ-1002", date: "2026-06-07", zodiacType: "ดิน", whiteNoise: 30, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
+    { patientId: "CZ-1002", date: "2026-06-08", zodiacType: "ดิน", whiteNoise: 20, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 0 },
+    { patientId: "CZ-1002", date: "2026-06-09", zodiacType: "ดิน", whiteNoise: 40, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 0 },
+
+    // CZ-1003
+    { patientId: "CZ-1003", date: "2026-06-05", zodiacType: "น้ำ", whiteNoise: 0, rainSound: 10, oceanSound: 15, forestSound: 0, breathingSession: 0, brainDump: 0 },
+    { patientId: "CZ-1003", date: "2026-06-06", zodiacType: "น้ำ", whiteNoise: 0, rainSound: 20, oceanSound: 20, forestSound: 10, breathingSession: 1, brainDump: 0 },
+    { patientId: "CZ-1003", date: "2026-06-07", zodiacType: "น้ำ", whiteNoise: 0, rainSound: 0, oceanSound: 10, forestSound: 0, breathingSession: 0, brainDump: 0 },
+    { patientId: "CZ-1003", date: "2026-06-08", zodiacType: "น้ำ", whiteNoise: 0, rainSound: 10, oceanSound: 10, forestSound: 0, breathingSession: 1, brainDump: 0 },
+    { patientId: "CZ-1003", date: "2026-06-09", zodiacType: "น้ำ", whiteNoise: 0, rainSound: 15, oceanSound: 15, forestSound: 0, breathingSession: 0, brainDump: 0 }
+  ],
+  journals: [
+    // CZ-1001
+    { patientId: "CZ-1001", date: "2026-06-05", mood: "Stress", journalText: "วันนี้เครียดเรื่องงานมาก สมองไม่ยอมหยุดคิด พยายามข่มตานอนแล้วก็ตื่นบ่อย", voiceJournal: false, aiInsight: "จากการวิเคราะห์ความเครียดสูงสัมพันธ์กับการจดจ่อความคิด แนะนำให้ระบายความคิด Brain Dump ก่อนนอน" },
+    { patientId: "CZ-1001", date: "2026-06-06", mood: "Stress", journalText: "ทำงานด่วนถึงดึก ดื่มกาแฟตอนทุ่มนึง นอนไม่หลับเลย หลับได้แปปเดียวตื่นอีก", voiceJournal: true, aiInsight: "การดื่มคาเฟอีนหลังบ่ายสองส่งผลต่อระยะเวลาและการเข้าสู่ช่วงหลับลึกอย่างเห็นได้ชัด" },
+    { patientId: "CZ-1001", date: "2026-06-07", mood: "Sad", journalText: "รู้สึกเหนื่อยล้าสะสมจากหลายวันที่นอนน้อย สุขภาพเริ่มแย่ลง มีตื่นกลางดึกบ่อยมาก", voiceJournal: false, aiInsight: "สภาวะอารมณ์ดิ่งอาจเชื่อมโยงกับการอดนอนสะสม หลีกเลี่ยงการดูหน้าจอสมาร์ทโฟนก่อนนอน" },
+    { patientId: "CZ-1001", date: "2026-06-08", mood: "Neutral", journalText: "หลังจากไปเตะบอลและลดการจับมือถือ รู้สึกนอนได้ลึกขึ้น ตื่นน้อยลงนิดนึง ดีกว่าวันก่อนๆ", voiceJournal: false, aiInsight: "การออกกำลังกายช่วยผ่อนคลายกล้ามเนื้อและลดความเครียดสะสมได้อย่างยอดเยี่ยม" },
+    { patientId: "CZ-1001", date: "2026-06-09", mood: "Stress", journalText: "นอนไม่หลับอีกแล้ว เครียดเรื่องประชุมสัปดาห์หน้า เล่นทวิตเตอร์ในที่มืดนานเกินไป", voiceJournal: true, aiInsight: "Screen time ในที่มืดลดการผลิตสารเมลาโทนิน แนะนำให้งดใช้อุปกรณ์ก่อนนอน 1 ชั่วโมง" },
+
+    // CZ-1002
+    { patientId: "CZ-1002", date: "2026-06-05", mood: "Sad", journalText: "ตื่นมาตอนตีสองเพราะปวดฉี่และเริ่มใจสั่น นอนต่อยาวลำบาก รู้สึกอึดอัด", voiceJournal: false, aiInsight: "กลุ่มอายุสูงวัยมักพบการตื่นกลางดึกได้บ่อย พยายามลดของเหลวก่อนเข้านอน 2 ชั่วโมง" },
+    { patientId: "CZ-1002", date: "2026-06-06", mood: "Neutral", journalText: "ดื่มชาช่วงบ่ายไปสองแก้ว นอนหลับยากขึ้นนิดหน่อย แต่พอลืมตามาก็สว่างแล้ว", voiceJournal: true, aiInsight: "ชาและเครื่องดื่มคาเฟอีนกระตุ้นประสาททำให้สมองสูงวัยตระหนักถึงสัญญาณรบกวนง่ายขึ้น" },
+    { patientId: "CZ-1002", date: "2026-06-07", mood: "Neutral", journalText: "วันนี้ทำบุญช่วงเช้า อารมณ์แจ่มใสดี แต่มีงีบช่วงบ่ายไปเกือบชั่วโมง ตกกลางคืนเลยนอนไม่ค่อยหลับ", voiceJournal: false, aiInsight: "การงีบหลับกลางวันที่นานเกิน 30 นาทีจะรบกวน Sleep Drive หรือความง่วงในช่วงเวลากลางคืน" },
+    { patientId: "CZ-1002", date: "2026-06-08", mood: "Positive", journalText: "ได้คุยกับหลานๆ นอนหลับฝันดี อุ่นใจ สบายใจขึ้นมาก ไม่ค่อยตื่นกลางดึกเลย", voiceJournal: true, aiInsight: "ความรู้สึกผ่อนคลายและอุ่นใจมีผลเชิงบวกโดยตรงต่อระบบประสาทพาราซิมพาเธติกทำให้การนอนเสถียร" },
+    { patientId: "CZ-1002", date: "2026-06-09", mood: "Neutral", journalText: "รู้สึกปวดไหล่นิดหน่อยตอนนอน นอนพลิกตัวบ่อย มีเสียงรบกวนจากภายนอกค่อนข้างบ่อย", voiceJournal: false, aiInsight: "สภาวะปวดเมื่อยทางกายกระตุ้นการรับรู้เสียงรบกวน แนะนำให้เปิด White Noise เพื่อบดบังเสียงรบกวนดีขึ้น" },
+
+    // CZ-1003
+    { patientId: "CZ-1003", date: "2026-06-05", mood: "Positive", journalText: "วันนี้ซ้อมวิ่งมินิมาราธอนล้าพอดี นอนหลับรวดเดียวถึงเช้า รู้สึกสดชื่นมากๆ", voiceJournal: false, aiInsight: "การออกกำลังกายที่เหมาะสมเพิ่มอัตราส่วนการหลับลึกและเพิ่มประสิทธิภาพการฟื้นฟูของสมอง" }
+  ]
+};
+
+// Ensure database file is initialized
+const loadDatabase = (): DatabaseState => {
+  try {
+    if (fs.existsSync(DB_FILE_PATH)) {
+      const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error("Error loading database file, using fallback:", error);
+  }
+  return INITIAL_DATABASE;
+};
+
+const saveDatabase = (state: DatabaseState) => {
+  try {
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(state, null, 2), 'utf-8');
+  } catch (error) {
+    console.error("Error saving database file:", error);
+  }
+};
+
+let databaseStore = loadDatabase();
+saveDatabase(databaseStore);
+
+// Get whole store or discrete portions
+app.get('/api/store', (req, res) => {
+  res.json(databaseStore);
+});
+
+// Update standard sheets
+app.post('/api/store/update', (req, res) => {
+  try {
+    const { key, value } = req.body;
+    if (key in databaseStore) {
+      (databaseStore as any)[key] = value;
+      saveDatabase(databaseStore);
+      res.json({ success: true, message: `Updated database key: ${key}` });
+    } else {
+      res.status(400).json({ error: `Invalid storage key: ${key}` });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync entire database store from client (Local Storage master)
+app.post('/api/store/sync-full', (req, res) => {
+  try {
+    const fullState = req.body as DatabaseState;
+    if (fullState && Array.isArray(fullState.users)) {
+      databaseStore = fullState;
+      saveDatabase(databaseStore);
+      res.json({ success: true, message: "Synchronized entire database state successfully" });
+    } else {
+      res.status(400).json({ error: "Invalid state payload structure" });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create/Update user
+app.post('/api/store/user', (req, res) => {
+  try {
+    const user: User = req.body;
+    const existingIndex = databaseStore.users.findIndex(u => u.patientId === user.patientId);
+    if (existingIndex !== -1) {
+      databaseStore.users[existingIndex] = user;
+    } else {
+      databaseStore.users.push(user);
+    }
+    saveDatabase(databaseStore);
+    res.json({ success: true, user });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete user and associated data
+app.delete('/api/store/user/:patientId', (req, res) => {
+  try {
+    const { patientId } = req.params;
+    databaseStore.users = databaseStore.users.filter(u => u.patientId !== patientId);
+    databaseStore.sleepDiary = databaseStore.sleepDiary.filter(d => d.patientId !== patientId);
+    databaseStore.dailyFactors = databaseStore.dailyFactors.filter(f => f.patientId !== patientId);
+    databaseStore.assessments = databaseStore.assessments.filter(a => a.patientId !== patientId);
+    databaseStore.wellnessUsage = databaseStore.wellnessUsage.filter(w => w.patientId !== patientId);
+    databaseStore.journals = databaseStore.journals.filter(j => j.patientId !== patientId);
+    saveDatabase(databaseStore);
+    res.json({ success: true, message: `Deleted user and assoc data: ${patientId}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Log sleep diary & factors together
+app.post('/api/store/log-daily', (req, res) => {
+  try {
+    const { diary, factors, wellness, journal } = req.body;
+    
+    // Add or update sleep diary
+    if (diary) {
+      const idx = databaseStore.sleepDiary.findIndex(d => d.patientId === diary.patientId && d.date === diary.date);
+      if (idx !== -1) databaseStore.sleepDiary[idx] = diary;
+      else databaseStore.sleepDiary.push(diary);
+    }
+
+    // Add or update daily factors
+    if (factors) {
+      const idx = databaseStore.dailyFactors.findIndex(f => f.patientId === factors.patientId && f.date === factors.date);
+      if (idx !== -1) databaseStore.dailyFactors[idx] = factors;
+      else databaseStore.dailyFactors.push(factors);
+    }
+
+    // Add or update assessment
+    if (req.body.assessment) {
+      const ass = req.body.assessment;
+      const idx = databaseStore.assessments.findIndex(a => a.patientId === ass.patientId && a.date === ass.date);
+      if (idx !== -1) databaseStore.assessments[idx] = ass;
+      else databaseStore.assessments.push(ass);
+    }
+
+    // Add or update wellness usage
+    if (wellness) {
+      const idx = databaseStore.wellnessUsage.findIndex(w => w.patientId === wellness.patientId && w.date === wellness.date);
+      if (idx !== -1) databaseStore.wellnessUsage[idx] = wellness;
+      else databaseStore.wellnessUsage.push(wellness);
+    }
+
+    // Add or update journals
+    if (journal) {
+      const idx = databaseStore.journals.findIndex(j => j.patientId === journal.patientId && j.date === journal.date);
+      if (idx !== -1) databaseStore.journals[idx] = journal;
+      else databaseStore.journals.push(journal);
+    }
+
+    saveDatabase(databaseStore);
+    res.json({ success: true, state: databaseStore });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Gemini AI Mood Analysis and Insight generation
+app.post('/api/gemini/analyze-journal', async (req, res) => {
+  const { journalText, dailyFactorsText } = req.body;
+  
+  if (!journalText) {
+    return res.status(400).json({ error: "No journal context provided" });
+  }
+
+  // Fallback dynamic generator if API client isn't active
+  const runFallbackSimulation = () => {
+    const textLower = journalText.toLowerCase();
+    let mood: 'Positive' | 'Neutral' | 'Sad' | 'Stress' = 'Neutral';
+    let aiInsight = 'จากการสัมภาษณ์อารมณ์ของคุณอยู่ในเกณฑ์ดี ควรรักษาสุขอนามัยที่ดีต่อไป';
+
+    if (textLower.includes('เครียด') || textLower.includes('กังวล') || textLower.includes('งาน') || textLower.includes('หลับยาก') || textLower.includes('stress') || textLower.includes('worry')) {
+      mood = 'Stress';
+      aiInsight = 'อารมณ์สัญจรไปอยู่ที่ความตึงเครียด แนะนำการฝึกหายใจ Box Breathing 4-4-4-4 เพื่อปรับระดับความนิ่งของอัตราการเต้นของใจก่อนนอน ร่วมกับการระบายความคิด Brain Dump ครับ';
+    } else if (textLower.includes('เศร้า') || textLower.includes('ท้อ') || textLower.includes('เหนื่อย') || textLower.includes('แย่') || textLower.includes('sad') || textLower.includes('depressed')) {
+      mood = 'Sad';
+      aiInsight = 'พบความรู้สึกหม่นหมองและความรู้สึกเหนื่อยล้าสะสม การนอนไม่หลับสะสมอาจรบกวนสารเคมีแห่งความสุขในสมอง ลองปรับเวลาฟังเสียงโอบอุ้มของธรรมชาติฝนตกหรือคลื่นทะเล และรักษาเวลาเข้านอนให้มั่นคง';
+    } else if (textLower.includes('ดี') || textLower.includes('สดชื่น') || textLower.includes('สุข') || textLower.includes('ออกกำลัง') || textLower.includes('happy') || textLower.includes('good')) {
+      mood = 'Positive';
+      aiInsight = 'ยอดเยี่ยมเลยครับ! การนอนหลับที่เชื่อมโยงกับสภาวะอารมณ์บวกและความสุขจะช่วยฟื้นฟูร่างกายได้ดีขึ้น การออกกำลังกายสม่ำเสมอเป็นตัวเร่งให้การนอนหลับมีเสถียรภาพและเปี่ยมพลัง';
+    } else {
+      mood = 'Neutral';
+      aiInsight = 'สภาวะอารมณ์ปกติและสมดุล เพื่อการนอนที่มีรสนิยมล้ำลึก แนะนำให้นอนในห้องมืดที่เย็นสบาย (ประมาณ 25 องศาเซลเซียส) และหลีกเลี่ยงแสงสีฟ้าจากสกรีนก่อนนอนอย่างน้อย 30 นาที';
+    }
+
+    if (dailyFactorsText) {
+      aiInsight += ` (วิเคราะห์เปรียบเทียบปัจจัยพฤติกรรม: ${dailyFactorsText})`;
+    }
+
+    return { mood, aiInsight };
+  };
+
+  if (!ai) {
+    console.log("Gemini client not initialized, running simulated local analysis.");
+    return res.json(runFallbackSimulation());
+  }
+
+  try {
+    const prompt = `ช่วยวิเคราะห์อารมณ์และให้ความเห็นเชิงลึกเกี่ยวกับการนอน (Sleep Insight) เป็นภาษาไทยอย่างสว่างอบอุ่นและเข้าใจง่าย (โทนเป็นกันเอง ไม่เป็นราชการหรือวิชาการจนเกินไป) จากบันทึกไดอารี่การนอนดังต่อไปนี้:
+บันทึกผู้ใช้: "${journalText}"
+${dailyFactorsText ? `ข้อมูลเสริมวิถีชีวิต: ${dailyFactorsText}` : ''}
+
+ความต้องการผลลัพธ์เป็น JSON เท่านั้นที่มีโครงสร้างตรงนี้:
+{
+  "mood": "หนึ่งในสี่คำนี้เท่านั้น: Positive, Neutral, Sad, Stress",
+  "aiInsight": "ความเห็นเชิงลึกและการแนะนำช่วยเหลือสั้นๆ อบอุ่น 2-3 ประโยคในภาษาไทย"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            mood: {
+              type: Type.STRING,
+              description: "The identified mood: Positive, Neutral, Sad, or Stress"
+            },
+            aiInsight: {
+              type: Type.STRING,
+              description: "A kind, warm, helpful Thai sentence summarizing sleep guidance"
+            }
+          },
+          required: ["mood", "aiInsight"]
+        }
+      }
+    });
+
+    const parsedData = JSON.parse(response.text || '{}');
+    console.log("Gemini API parsed analysis output:", parsedData);
+    res.json({
+      mood: parsedData.mood || 'Neutral',
+      aiInsight: parsedData.aiInsight || 'จากการประเมินเบื้องต้น แนะนำให้จัดสิ่งแวดล้อมที่เงียบสงบ หลีกเลี่ยงหน้าจอ 1 ชั่วโมงก่อนนอน และฝึกควบคุมลมหายใจสม่ำเสมอ'
+    });
+  } catch (err: any) {
+    console.error("Gemini runtime error, executing fallback simulation.", err);
+    res.json(runFallbackSimulation());
+  }
+});
+
+// Gemini AI Sleep Screening Advisor
+app.post('/api/gemini/analyze-screening', async (req, res) => {
+  const { patientId, isi, ess, stopBang, riskLevel } = req.body;
+
+  const runFallbackSimulation = () => {
+    let advice = `คำแนะนำจาก AI คอสมอสผู้ดูแลสุขภาพการนอนประจำบ้าน (ผลลัพธ์ของสมาชิก: ${patientId}):\n\n`;
+    advice += `• ดัชนีกลุ่มอาการนอนไม่หลับ (ISI): ได้ ${isi} คะแนน ซึ่งแปลว่ามีปัญหาในระดับ ${isi <= 7 ? 'ปกติกระปรี้กระเปร่า' : isi <= 14 ? 'เริ่มต้นรบกวนบางคืน' : isi <= 21 ? 'ปานกลางเด่นชัด' : 'รุนแรงวิกฤต'}\n`;
+    advice += `• ความง่วงกลางวัน (ESS): ได้ ${ess} คะแนน ${ess > 9 ? 'ชี้ว่ามีความง่วงสะสมระหว่างวันสูง อาจมีภาวะหนี้การนอนสูง' : 'อยู่ในเกณฑ์ปกติเหมาะสม'}\n`;
+    advice += `• ความเสี่ยงทางลมหายใจ (STOP-BANG): ได้ ${stopBang} คะแนน (ความเสี่ยงภาพรวม: ${riskLevel})\n\n`;
+    
+    if (stopBang >= 3) {
+      advice += `⚠️ ข้อควรระวังพิเศษสำหรับใช้ที่บ้าน: คะแนน STOP-BANG ตั้งแต่ 3 ข้อขึ้นไป บ่งบอกถึงความเสี่ยงสะสมต่อภาวะหยุดหายใจหรือกรนสะดุ้งตื่น มีความจำเป็นต้องใส่ใจท่านอนตะแคง เลี่ยงการนอนหงาย และจัดอุณหภูมิห้องนอนให้โปร่งสบาย และหลีกเลี่ยงแอลกอฮอล์หรืออาหารหนักก่อนนอน 3 ชั่วโมงครับ`;
+    } else {
+      advice += `✨ สุขอนามัยการนอนหลับค่อนข้างปลอดภัย แนะนำให้เสริมกำลังด้วยการเข้านอนตรงเวลา ฝึกลมหายใจกล่อง 4-4-4-4 และเปิดเสียงธรรมชาติน้ำพุบำบัดในระลอกความถี่สม่ำเสมอพึงประสงค์`;
+    }
+    return advice;
+  };
+
+  if (!ai) {
+    console.log("No Gemini key. Returning simulated screening evaluation.");
+    return res.json({ advice: runFallbackSimulation() });
+  }
+
+  try {
+    const user = databaseStore.users.find(u => u.patientId === patientId);
+    const prompt = `คุณคือโค้ชผู้เชี่ยวชาญการนอนหลับส่วนบุคคลสำหรับครอบครัวประจำบ้าน (Warm Family Sleep Coach) 
+สมาชิกในครอบครัว เพศ ${user?.gender || 'ไม่ระบุ'} อายุ ${user?.age || 'ไม่ระบุ'} ค่าน้ำหนักตัว ${user?.weight || 'ไม่ระบุ'} กก. ส่วนสูง ${user?.height || 'ไม่ระบุ'} ซม. มีผลการตรวจคัดกรองเบื้องต้นดังนี้:
+- ดัชนีภาวะนอนไม่หลับ (ISI): ${isi}/28 คะแนน
+- ระดับง่วงนอนสะสมกลางวัน (ESS): ${ess}/24 คะแนน
+- ดัชนีความเสี่ยงต่อภาวะหยุดหายใจขณะหลับ (STOP-BANG): ${stopBang}/8 คะแนน
+- ระดับความเสี่ยงภาพรวมจากแบบประเมิน: ระดับ ${riskLevel}
+
+ช่วยวิเคราะห์ผลประเมินเหล่านี้อย่างอบอุ่น ละเอียดอ่อน แต่เข้าใจง่ายมากสำหรับใช้ประเมินตนเองทางบ้าน แนะนำวิธีปรับตัว วิถีชีวิต (Lifestyle) และสารอาหารหรือสิ่งผ่อนคลายที่ควรใช้ รวมถึงการคอยสังเกตเรื่องการกรนลึกหรือสะดุ้งตื่นเพื่อความปลอดภัยในบ้าน (เขียนสรุปเป็นข้อๆ แยกเป็นหัวข้อที่กระชับและอบอุ่น เข้าใจง่าย เหมาะกับการนำมาประยุกต์ใช้ในบ้าน)`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+    });
+
+    res.json({ advice: response.text || runFallbackSimulation() });
+  } catch (err) {
+    console.error("Gemini screening analysis failed, fallback applied:", err);
+    res.json({ advice: runFallbackSimulation() });
+  }
+});
+
+// Gemini AI Weekly summary report
+app.post('/api/gemini/generate-weekly-report', async (req, res) => {
+  const { patientId } = req.body;
+  
+  if (!patientId) {
+    return res.status(400).json({ error: "Patient ID is required" });
+  }
+
+  const diaries = databaseStore.sleepDiary.filter(d => d.patientId === patientId);
+  const factors = databaseStore.dailyFactors.filter(f => f.patientId === patientId);
+  const assessments = databaseStore.assessments.filter(a => a.patientId === patientId);
+  const wellness = databaseStore.wellnessUsage.filter(w => w.patientId === patientId);
+  const user = databaseStore.users.find(u => u.patientId === patientId);
+
+  // Compile correlation summaries
+  const promptData = {
+    user,
+    assessmentsCount: assessments.length,
+    diariesCount: diaries.length,
+    averageDuration: diaries.length ? diaries.reduce((acc, d) => acc + d.sleepDuration, 0) / diaries.length : 0,
+    averageStress: factors.length ? factors.reduce((acc, d) => acc + d.stressScore, 0) / factors.length : 0,
+    averageScreenTime: factors.length ? factors.reduce((acc, d) => acc + d.screenTime, 0) / factors.length : 0,
+    averageCaffeine: factors.length ? factors.reduce((acc, d) => acc + d.caffeine, 0) / factors.length : 0,
+    recentJournals: databaseStore.journals.filter(j => j.patientId === patientId).slice(-3)
+  };
+
+  const fallbackReport = () => {
+    let text = `การประเมินสัปดาห์สำหรับสมาชิกครอบครัว ${user?.gender === 'หญิง' ? 'คุณแม่/หญิงสาว' : 'คุณชาย'} อายุ ${user?.age || 'ไม่ระบุ'} ปี:\n`;
+    text += `• ชั่วโมงการนอนเฉลี่ยอยู่ที่ประมาณ ${promptData.averageDuration.toFixed(1)} ชั่วโมง อยู่ในเกณฑ์ปานกลาง\n`;
+    if (promptData.averageStress > 6) {
+      text += `• ตรวจพบว่าความเครียดสะสมเฉลี่ยสูง (${promptData.averageStress.toFixed(1)}/10) ส่งผลให้ตื่นกลางดึกบ่อยขึ้น แนะนำให้ทำกิจกรรมผ่อนคลายอย่าง Zodiac Sleep Sync ธาตุ${wellness[0]?.zodiacType || 'ไฟ'} และการเตปอดขยายลมหายใจ\n`;
+    }
+    if (promptData.averageScreenTime > 4.0) {
+      text += `• สกรีนไทม์เฉลี่ยถึง ${promptData.averageScreenTime.toFixed(1)} ชั่วโมงต่อวัน มีนัยสัมพันธ์ทำให้ระยะเวลาการนอนสะท้อนว่าน้อยลงในวันที่มีเวลาหน้าจอเกิน 4 ชั่วโมง\n`;
+    }
+    text += `• แนะนำเพิ่มเติม: พยายามคุมปริมาณคาเฟอีนไม่ให้เกิน 2 แก้วต่อวัน และรักษาสมดุลความอบอุ่นในห้องนอนเพื่อลดการตื่นกลางดึกครับ`;
+    return text;
+  };
+
+  if (!ai) {
+    console.log("No Gemini key. Returning simulated weekly insight.");
+    return res.json({ report: fallbackReport() });
+  }
+
+  try {
+    const prompt = `คุณคือผู้เชี่ยวชาญด้านสุขอนามัยการนอนหลับ (Sleep Coach) สำหรับทุกคนในครอบครัวประจำบ้าน
+สมาชิกในบ้านต้องการคำแนะนำสรุปความสัมพันธ์ของข้อมูลพฤติกรรมเพื่อปรับเปลี่ยนวิถีชีวิต อธิบายสั้นๆ อบอุ่น สุภาพ ไม่เป็นทางการ เป็นกันเองและไม่มีศัพท์วิชาการยากๆ
+ข้อมูลของสมาชิกครอบครัวรหัส ${patientId}:
+${JSON.stringify(promptData, null, 2)}
+
+วิเคราะห์เชิงอิทธิพลและสุขภาพ (Correlation Analysis) ให้สมาชิกรายสัปดาห์ในประเด็น:
+1. ความเครียด (Stress Score) ส่งผลถึงความขัดข้องในการนอนหลับหรือการระบายความคิดอย่างไรบ้าง
+2. คาเฟอีนการบริโภคส่งผลต่อระยะเวลานอนในภาพรวมหรือไม่
+3. สกรีนไทม์ส่งผลต่อประสิทธิภาพการหลับ (Sleep Efficiency)
+กรุณาเขียนสรุปจุดสังเกต 3 ข้อหลักที่สมาชิกครอบครัวควรปรับปรุงเป็นภาษาไทยที่สุภาพอบอุ่น เข้าใจง่าย เหมาะกับการใช้ทุกวัย`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+    });
+
+    res.json({ report: response.text || fallbackReport() });
+  } catch (err) {
+    console.error("Gemini report generation failed, fallback applied:", err);
+    res.json({ report: fallbackReport() });
+  }
+});
+
+// Vite middleware for dev or regular static server for production
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+    console.log("Dev Mode: Mounted Vite middleware.");
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+    console.log("Production Mode: Serving static assets from " + distPath);
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();

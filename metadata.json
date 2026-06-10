@@ -1,0 +1,10 @@
+{
+  "name": "Cozmos",
+  "description": "Cozmos (คอสมอส) - แพลตฟอร์มดูแลสุขภาวะการนอนหลับส่วนบุคคลระดับครอบครัวสำหรับใช้ในบ้าน ผสานการติดตาม วิเคราะห์พฤติกรรม และส่งเสริมการนอนหลับอย่างครบวงจร อบอุ่นและใช้งานง่าย",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

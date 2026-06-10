@@ -1,0 +1,230 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  /* Vibrant Cosmic Dark Theme Core */
+  --color-sleep-cream: #0B1026;
+  --color-sleep-card: #131936;
+  --color-white: #ffffff; /* Restore beautiful pure white for crisp text and clear components worldwide! */
+  
+  --color-sleep-blue-950: #f8fafc; /* high contrast white */
+  --color-sleep-blue-900: #1e295d; /* beautiful deep space indigo - NOT #131936 to prevent blending card backgrounds */
+  --color-sleep-blue-800: #232d60; /* cosmic indigo medium */
+  --color-sleep-blue-700: #2d397a; /* cosmic indigo light */
+  --color-sleep-blue-600: #94a3b8; /* slate-400 secondary */
+  --color-sleep-blue-500: #64748b; /* slate-500 secondary */
+  --color-sleep-blue-400: #fbbf24; /* gold-vibrant accent */
+  --color-sleep-blue-300: #818cf8; /* indigo highlight */
+  --color-sleep-blue-100: #202b5e; /* dark border */
+  --color-sleep-blue-105: #202b5e; /* dark footer border */
+  --color-sleep-blue-50: #1c2654;  /* active background or hover row */
+  
+  --color-sleep-gold-500: #facc15; /* neon gold-yellow */
+  --color-sleep-gold-400: #fbbf24; /* yellow-400 */
+  --color-sleep-gold-300: #fde047;
+  --color-sleep-gold-200: #fef08a;
+  --color-sleep-gold-100: #261f06; /* dark gold backing */
+  --color-sleep-gold-50: #181404;  /* active profile backing */
+}
+
+@layer base {
+  body {
+    background-color: #0B1026;
+    color: #f1f5f9;
+    @apply font-sans;
+  }
+}
+
+/* Ensure bg-white cards render as gorgeous deep navy cosmic cards in dark mode */
+.bg-white {
+  background-color: #131936 !important;
+}
+
+/* Ensure text labels and headers remain highly legible in the vibrant dark mode */
+.text-sleep-blue-900 {
+  color: #f8fafc !important;
+}
+.text-sleep-blue-800 {
+  color: #cbd5e1 !important;
+}
+.text-sleep-blue-700 {
+  color: #a5b4fc !important; /* light indigo contrast */
+}
+.text-sleep-blue-600 {
+  color: #cbd5e1 !important;
+}
+.text-sleep-blue-500 {
+  color: #94a3b8 !important;
+}
+.text-sleep-blue-950 {
+  color: #f8fafc !important;
+}
+
+/* Force highly readable dark text when placed on any bright gold/yellow elements */
+.bg-sleep-gold-500, 
+.bg-sleep-gold-400, 
+.bg-sleep-gold-300, 
+.bg-sleep-gold-200, 
+.bg-yellow-400, 
+.bg-amber-400 {
+  color: #0b1026 !important;
+}
+.bg-sleep-gold-500 svg, 
+.bg-sleep-gold-400 svg, 
+.bg-sleep-gold-300 svg, 
+.bg-sleep-gold-200 svg, 
+.bg-yellow-400 svg, 
+.bg-amber-400 svg {
+  stroke: #0b1026 !important;
+  color: #0b1026 !important;
+}
+.bg-sleep-gold-500 *, 
+.bg-sleep-gold-400 *, 
+.bg-sleep-gold-300 *, 
+.bg-sleep-gold-200 *, 
+.bg-yellow-400 *, 
+.bg-amber-400 *,
+.bg-sleep-gold-500 [class*="text-"],
+.bg-sleep-gold-400 [class*="text-"],
+.bg-sleep-gold-300 [class*="text-"],
+.bg-sleep-gold-200 [class*="text-"],
+.bg-yellow-400 [class*="text-"],
+.bg-amber-400 [class*="text-"] {
+  color: #0b1026 !important;
+}
+
+/* Override standard bootstrap light alert banners with gorgeous immersive ambient dark alerts matching cosmic styling */
+.bg-green-50, .bg-green-50\/50, [class*="bg-green-50"] {
+  background-color: #052e16 !important; /* deep rich forest dark */
+  border-color: #10b981 !important;
+}
+.text-green-600, .text-green-700 {
+  color: #34d399 !important; /* luminous emerald text */
+}
+
+.bg-yellow-50, .bg-yellow-50\/50, [class*="bg-yellow-50"] {
+  background-color: #451a03 !important; /* deep rich chocolate golden dark */
+  border-color: #fbbf24 !important;
+}
+.text-yellow-600, .text-yellow-700 {
+  color: #fbbf24 !important; /* highly visible yellow text */
+}
+
+.bg-orange-50, .bg-orange-50\/50, [class*="bg-orange-50"] {
+  background-color: #7c2d12 !important; /* deep warm amber rust dark */
+  border-color: #f97316 !important;
+}
+.text-orange-600, .text-orange-700 {
+  color: #fdba74 !important; /* light warm orange text */
+}
+
+.bg-red-50, .bg-red-50\/50, [class*="bg-red-50"] {
+  background-color: #450a0a !important; /* deep crimson red dark */
+  border-color: #ef4444 !important;
+}
+.text-red-500, .text-red-600, .text-red-700 {
+  color: #fca5a5 !important; /* beautiful light red text */
+}
+
+.bg-amber-50, .bg-amber-50\/50, [class*="bg-amber-50"] {
+  background-color: #2e1d0d !important; /* rich earthy chocolate-amber dark background */
+  border-color: #d97706 !important;
+}
+.text-amber-600, .text-amber-700 {
+  color: #fbbf24 !important; /* bright warm golden-amber text */
+}
+
+/* Fallbacks for generic light blue or neutral banners inside standard modules */
+.bg-blue-50, .bg-blue-50\/50, [class*="bg-blue-50"], .bg-indigo-50 {
+  background-color: #1e1b4b !important; /* deep dark indigo */
+  border-color: #6366f1 !important;
+}
+.text-blue-600, .text-blue-700, .text-indigo-600, .text-indigo-700 {
+  color: #c7d2fe !important; /* luminous lavender-blue */
+}
+
+.bg-sleep-gold-50 {
+  background-color: #1c1910 !important; /* dark slate gold active container background */
+}
+
+
+/* Input field overrides for high visibility */
+input, select, textarea {
+  background-color: #101530 !important;
+  color: #f8fafc !important;
+  border-color: #212d63 !important;
+}
+input::placeholder, textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Recharts Dashboard styling for Dark Vibrant Theme Cosmic HUD look */
+.recharts-cartesian-grid line {
+  stroke: #212d63 !important; /* soft dark borders for chart gridlines */
+  stroke-opacity: 0.6;
+}
+.recharts-default-tooltip {
+  background-color: #0d122e !important;
+  border: 1px solid #212d63 !important;
+  border-radius: 12px !important;
+  color: #f8fafc !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+}
+.recharts-tooltip-item {
+  color: #fbbf24 !important;
+}
+.recharts-legend-item-text {
+  color: #cbd5e1 !important;
+}
+.recharts-text {
+  fill: #94a3b8 !important; /* secondary text color for axises */
+}
+.recharts-sector {
+  stroke: #131936 !important; /* spacer between pie pieces */
+}
+
+/* Glow enhancements following the design specification */
+.glow-gold {
+  box-shadow: 0 0 25px rgba(250, 204, 21, 0.25);
+}
+.glow-indigo {
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.2);
+}
+
+/* Animations for breathing exercise visual states */
+@keyframes breathing-inhale {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(1.6); opacity: 0.85; }
+}
+
+@keyframes breathing-exhale {
+  0% { transform: scale(1.6); opacity: 0.85; }
+  100% { transform: scale(1); opacity: 0.5; }
+}
+
+.animate-inhale {
+  animation: breathing-inhale 4s ease-in-out infinite alternate;
+}
+
+.animate-box-inhale {
+  animation: breathing-inhale 4s ease-in-out forwards;
+}
+
+/* Custom scrollbar for looker studio dashboards and clinical list logs */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #ccd1db;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b0b7c3;
+}
