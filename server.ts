@@ -162,7 +162,8 @@ const INITIAL_DATABASE: DatabaseState = {
 
     // CZ-1003
     { patientId: "CZ-1003", date: "2026-06-05", mood: "Positive", journalText: "วันนี้ซ้อมวิ่งมินิมาราธอนล้าพอดี นอนหลับรวดเดียวถึงเช้า รู้สึกสดชื่นมากๆ", voiceJournal: false, aiInsight: "การออกกำลังกายที่เหมาะสมเพิ่มอัตราส่วนการหลับลึกและเพิ่มประสิทธิภาพการฟื้นฟูของสมอง" }
-  ]
+  ],
+  vitalSigns: []
 };
 
 // Ensure database file is initialized
@@ -170,7 +171,11 @@ const loadDatabase = (): DatabaseState => {
   try {
     if (fs.existsSync(DB_FILE_PATH)) {
       const data = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (parsed && !parsed.vitalSigns) {
+        parsed.vitalSigns = [];
+      }
+      return parsed;
     }
   } catch (error) {
     console.error("Error loading database file, using fallback:", error);
