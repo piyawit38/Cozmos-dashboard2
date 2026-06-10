@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Assessment } from '../types';
-import { ClipboardCheck, Sparkles, Check, ChevronRight, Activity, Moon, Sun, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { ClipboardCheck, Sparkles, Check, ChevronRight, Activity, Moon, Sun, AlertTriangle, ArrowLeft, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface SleepScreeningProps {
@@ -18,13 +18,13 @@ interface SleepScreeningProps {
 
 // ISI Questions แบบประเมินง่าย
 const ISI_QUESTIONS = [
-  { text: "การหลับยาก (Sleep Onset Latency)", options: ["< 15 นาที (0)", "16-30 นาที (1)", "31-45 นาที (2)", "46-60 นาที (3)", "> 60 นาที (4)"], values: [0,1,2,3,4] },
-  { text: "การตื่นกลางดึก (WASO)", options: ["ไม่ตื่น / หลับต่อทันที (0)", "< 15 นาที (1)", "15-30 นาที (2)", "30-45 นาที (3)", "> 45 นาที (4)"], values: [0,1,2,3,4] },
-  { text: "การตื่นเช้ามืด", options: ["ไม่เลย (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "รุนแรง (3)", "รุนแรงมาก (4)"], values: [0,1,2,3,4] },
-  { text: "ความพึงพอใจต่อการนอน", options: ["พอใจมาก (0)", "พอใจ (1)", "ปานกลาง (2)", "ไม่ค่อยพอใจ (3)", "ไม่พอใจเลย (4)"], values: [0,1,2,3,4] },
-  { text: "การรบกวนการใช้ชีวิต", options: ["ไม่รบกวน (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "รบกวนมากที่สุด (4)"], values: [0,1,2,3,4] },
-  { text: "ความกังวลเรื่องการนอน", options: ["ไม่กังวล (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "กังวลมากที่สุด (4)"], values: [0,1,2,3,4] },
-  { text: "คนรอบข้างสังเกตเห็นปัญหาการนอน", options: ["ไม่เห็น (0)", "เห็นเล็กน้อย (1)", "เห็นปานกลาง (2)", "เห็นมาก (3)", "เห็นชัดเจนมากที่สุด (4)"], values: [0,1,2,3,4] }
+  { text: "การหลับยาก (Sleep Onset Latency)", options: ["< 15 นาที (0)", "16-30 นาที (1)", "31-45 นาที (2)", "46-60 นาที (3)", "> 60 นาที (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "การตื่นกลางดึก (WASO)", options: ["ไม่ตื่น / หลับต่อทันที (0)", "< 15 นาที (1)", "15-30 นาที (2)", "30-45 นาที (3)", "> 45 นาที (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "การตื่นเช้ามืด", options: ["ไม่เลย (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "รุนแรง (3)", "รุนแรงมาก (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "ความพึงพอใจต่อการนอน", options: ["พอใจมาก (0)", "พอใจ (1)", "ปานกลาง (2)", "ไม่ค่อยพอใจ (3)", "ไม่พอใจเลย (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "การรบกวนการใช้ชีวิต", options: ["ไม่รบกวน (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "รบกวนมากที่สุด (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "ความกังวลเรื่องการนอน", options: ["ไม่กังวล (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "กังวลมากที่สุด (4)"], values: [0, 1, 2, 3, 4] },
+  { text: "คนรอบข้างสังเกตเห็นปัญหาการนอน", options: ["ไม่เห็น (0)", "เห็นเล็กน้อย (1)", "เห็นปานกลาง (2)", "เห็นมาก (3)", "เห็นชัดเจนมากที่สุด (4)"], values: [0, 1, 2, 3, 4] }
 ];
 
 const ESS_QUESTIONS = [
@@ -83,7 +83,147 @@ export default function SleepScreening({
   const [loadingAdvice, setLoadingAdvice] = useState<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // คำนวณคะแนนรวม
+  // Speech tracking and playback
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const [isSpeakingEval, setIsSpeakingEval] = useState<boolean>(false);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      synthRef.current = window.speechSynthesis;
+    }
+    return () => {
+      if (synthRef.current) {
+        synthRef.current.cancel();
+      }
+    };
+  }, []);
+
+  const handleToggleSpeech = useCallback(() => {
+    if (!synthRef.current) return;
+
+    if (isSpeaking) {
+      synthRef.current.cancel();
+      setIsSpeaking(false);
+    } else {
+      if (isSpeakingEval) {
+        synthRef.current.cancel();
+        setIsSpeakingEval(false);
+      }
+
+      // Cleanup text markup to speak cleanly
+      const cleanText = aiAdvice
+        .replace(/[#*`_~]/g, '')
+        .replace(/-- /g, '')
+        .replace(/- /g, '')
+        .replace(/⚠️/g, 'ข้อควรระวังสำคัญ')
+        .replace(/✨/g, '')
+        .replace(/:/g, ' ');
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.lang = 'th-TH';
+      utterance.rate = 1.0;
+
+      utterance.onend = () => {
+        setIsSpeaking(false);
+      };
+      utterance.onerror = () => {
+        setIsSpeaking(false);
+      };
+
+      utteranceRef.current = utterance;
+      setIsSpeaking(true);
+      synthRef.current.speak(utterance);
+    }
+  }, [aiAdvice, isSpeaking, isSpeakingEval]);
+
+  const handleToggleSpeechEval = useCallback(() => {
+    if (!synthRef.current) return;
+
+    if (isSpeakingEval) {
+      synthRef.current.cancel();
+      setIsSpeakingEval(false);
+    } else {
+      if (isSpeaking) {
+        synthRef.current.cancel();
+        setIsSpeaking(false);
+      }
+
+      // Compile clean Thai spoken text for the clinical evaluation results
+      let evalText = "บทประเมินพฤติกรรมรายข้อสำหรับใช้วิเคราะห์และรักษาความปลอดภัยในการนอนที่บ้านมีดังนี้ค่ะ ";
+
+      // ISI Analysis
+      evalText += "หมวดดัชนีและพฤติกรรมท้าทายภาวะนอนไม่หลับ ไอเอสไอ ";
+      let hasIsiIssue = false;
+      if (isiAnswers[0] >= 2) {
+        evalText += "ข้อที่หนึ่ง มีภาวะกล่อมตัวเองยากร่วมนอนช้า เกิดจากสภาวะจิตใจตื่นตัวพยายามบังคับสมองให้นอน แนะนำกฎบำบัด ซีบีทีไอ เรื่องการควบคุมสิ่งเร้า หากเริ่มล้มตัวนอน ยี่สิบนาที แล้วยังไม่หลับ ห้ามฝืนนอนดิ้นเด็ดขาด ให้ก้าวออกจากเตียงนั่งเก้าอี้แสงสลัว อ่านหนังสือจนง่วงย้อยค่อยกลับมานอนใหม่ค่ะ ";
+        hasIsiIssue = true;
+      }
+      if (isiAnswers[1] >= 2) {
+        evalText += "ข้อที่สอง มีปัญหาตื่นสะดุ้งกลางคืนรบกวน ตื่นแล้วหลับต่อยาก มักเกี่ยวเนื่องกับอุณหภูมิแกนตัวพุ่งสูงหรือความเครียดค้าง แนะนำงดเครื่องดื่มทุกประเภท สองชั่วโมงครึ่งก่อนนอน งดสิ่งเร้าเร่งด่วน และรักษาห้องนอนที่ยี่สิบสี่ถึงยี่สิบห้าองศาเซลเซียสเพื่อคงสมาธิร่างกายช่วงนอนหลับลึกค่ะ ";
+        hasIsiIssue = true;
+      }
+      if (isiAnswers[2] >= 2) {
+        evalText += "ข้อที่สาม ตื่นเช้าผิดปกติพลางนาฬิกาชีวิตหดสั้น ข้อควรระวังคือห้ามมองหาหรือจับมือถือมาปัดเช็กทันทีหลังจากตื่น เพราะแสงสีฟ้าล่อใจจะประเมินสัญญาณตื่นให้สมองและยุติการหลับทันที แนะนำปล่อยความรู้สึกหลวมๆ ในห้องมืดสลัวค่ะ ";
+        hasIsiIssue = true;
+      }
+      if (isiAnswers[5] >= 2) {
+        evalText += "ข้อที่สี่ มีความคิดหมุนวนกังวลเรื่องการนอนสูง จิตใต้สำนึกระแวง ส่งผลให้สมองหลั่งฮอร์โมนตื่นเตลิด แนะนำบำบัดด้วย เบรนดัมพ์ จดระบายทุกความกังวลใส่กระดาษ หนึ่งชั่วโมงครึ่งก่อนนอน เพื่อให้สมองเคลียร์ช่องทางสื่อสารเสร็จสิ้นค่ะ ";
+        hasIsiIssue = true;
+      }
+      if (!hasIsiIssue) {
+        evalText += "โดยรวมสัญญาณด้านสรีระกระตุ้นการนอนไม่หลับสมดุลดีเลิศเป็นธรรมชาติดีมากค่ะ ";
+      }
+
+      // ESS Analysis
+      evalText += "หมวดพฤติกรรมความง่วงกลางวันสะสม อีเอสเอส ";
+      if (essAnswers.some(v => v >= 2)) {
+        evalText += "พบคะแนนง่วงเฉียบพลันช่วงกลางวันปานกลางถึงสูงในบางกิจกรรม บ่งชี้ว่าคุณภาพการนอนหลับลึกโบยบินหายไป ทำให้สมองไม่ได้รับการกำจัดกรดสารเคมีอย่างเพียงพอก่อนลืมตา แนะนำงดงีบหลับกลางวันที่ยาวเกินยี่สิบห้านาทีในช่วงบ่าย เพื่อไม่ให้ดึงพลังหลับลึกของคืนถัดไปลดลงค่ะ ";
+      } else {
+        evalText += "การตื่นสมาธิความโปร่งใสกลางวันปกติสมบูรณ์ดีเยี่ยมค่ะ ";
+      }
+
+      // STOP-BANG Analysis
+      evalText += "หมวดโครงสร้างสอดรับความเสี่ยงหายใจขัดข้อง สต็อปแบง ";
+      let hasStopBangIssue = false;
+      if (stopBangAnswers[0] === 1) {
+        evalText += "มีอาการนอนกรนส่งเสียงสะเทือนรบกวน เกิดจากสรีระกล้ามเนื้อคอคลายตกอุดลมหายใจเป็นช่วงๆ แนะนำฝืนฝึกนอนตะแคงข้างตัว กอดหมอนข้างทรงสปริงแข็ง เพื่อเหนี่ยวแนวหลอดลมให้เบาสบายสม่ำเสมอค่ะ ";
+        hasStopBangIssue = true;
+      }
+      if (stopBangAnswers[2] === 1) {
+        evalText += "มีผู้พบเจอสะดุ้งตัวสลึมตื่นสำลักอากาศกลางดึก เป็นสัญญาณบอกเหตุ of ภาวะหยุดหายใจที่อันตรายสูงสุดสะสม แนะนำรีบติดต่อศูนย์โรคการนอนหลับเพื่อตรวจคัดกรอง สลีปเทสต์ หรือติดต่อแพทย์เฉพาะทาง อย่าละเลยเด็ดขาดค่ะ ";
+        hasStopBangIssue = true;
+      }
+      if (stopBangAnswers[3] === 1) {
+        evalText += "มีภาวะความดันโลหิตสูงรุมเร้าประจำตัว โรคหลอดเลือดคุมยากสัมพันธ์กับการบีบคาร์บอนไดออกไซด์ขาดอากาศเวลากระดูกล้มตัวกรนสลบ ควรพกพาเครื่องวัดความดันคอยมอนิเตอร์หลังลืมตาทุกเช้าค่ะ ";
+        hasStopBangIssue = true;
+      }
+      if (stopBangAnswers[6] === 1) {
+        evalText += "ขนาดรอบลำคอพังพานใหญ่เกินเกณฑ์เฉลี่ย มีโอกาสท่ออากาศเปิดแคบได้เร็วกว่าคนปกติ แนะนำหนุนไหล่สะโพกสูงสิบห้าถึงสามสิบองศาขณะเอนหัวนอนเพื่อหนีแนวโน้มหลอดลมหุบปิดพับค่ะ ";
+        hasStopBangIssue = true;
+      }
+      if (!hasStopBangIssue) {
+        evalText += "สภาพแนวทางลมหายใจหลอดลมสะดวกโยธินปลอดโปร่งปลอดภัยค่ะ ";
+      }
+
+      const utterance = new SpeechSynthesisUtterance(evalText);
+      utterance.lang = 'th-TH';
+      utterance.rate = 1.05;
+
+      utterance.onend = () => {
+        setIsSpeakingEval(false);
+      };
+      utterance.onerror = () => {
+        setIsSpeakingEval(false);
+      };
+
+      utteranceRef.current = utterance;
+      setIsSpeakingEval(true);
+      synthRef.current.speak(utterance);
+    }
+  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval]);
+
   const totalIsi = useMemo(() => isiAnswers.reduce((s, v) => s + v, 0), [isiAnswers]);
   const totalEss = useMemo(() => essAnswers.reduce((s, v) => s + v, 0), [essAnswers]);
   const totalStopBang = useMemo(() => stopBangAnswers.reduce((s, v) => s + v, 0), [stopBangAnswers]);
@@ -99,7 +239,7 @@ export default function SleepScreening({
   const getIsiCategory = useCallback((score: number) => {
     if (score <= 7) return { text: "ปกติ (No significant insomnia)", color: "text-green-700 bg-green-50 border-green-200", bg: "bg-green-50" };
     if (score <= 14) return { text: "อาการนอนไม่หลับเล็กน้อยระดับเฝ้าระวัง (Subthreshold insomnia)", color: "text-amber-700 bg-amber-50 border-amber-200", bg: "bg-amber-50" };
-    if (score <= 21) return { text: "ปัญหานอนไม่หลับระดับความรุนแรงปานกลาง (Clinical insomnia - moderate)", color: "text-orange-700 bg-orange-50 border-orange-200", bg: "bg-orange-50" };
+    if (score <= 21) return { text: "ปัญหอนอนไม่หลับระดับความรุนแรงปานกลาง (Clinical insomnia - moderate)", color: "text-orange-700 bg-orange-50 border-orange-200", bg: "bg-orange-50" };
     return { text: "มีอาการนอนไม่หลับอย่างรุนแรงวิกฤต (Clinical insomnia - severe) — ควรปรึกษาแพทย์เฉพาะทาง", color: "text-red-700 bg-red-50 border-red-200", bg: "bg-red-50" };
   }, []);
 
@@ -195,6 +335,10 @@ export default function SleepScreening({
     abortControllerRef.current = controller;
     setLoadingAdvice(true);
     setAiAdvice('');
+    if (synthRef.current) {
+      synthRef.current.cancel();
+    }
+    setIsSpeaking(false);
     try {
       const resp = await fetch('/api/gemini/analyze-screening', {
         method: 'POST',
@@ -204,7 +348,10 @@ export default function SleepScreening({
           isi: totalIsi,
           ess: totalEss,
           stopBang: totalStopBang,
-          riskLevel: overallRisk
+          riskLevel: overallRisk,
+          isiAnswers,
+          essAnswers,
+          stopBangAnswers
         }),
         signal: controller.signal
       });
@@ -218,7 +365,7 @@ export default function SleepScreening({
       setLoadingAdvice(false);
       if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
-  }, [patientId, totalIsi, totalEss, totalStopBang, overallRisk]);
+  }, [patientId, totalIsi, totalEss, totalStopBang, overallRisk, isiAnswers, essAnswers, stopBangAnswers]);
 
   useEffect(() => {
     return () => {
@@ -228,9 +375,6 @@ export default function SleepScreening({
 
   const handleSubmit = useCallback(() => {
     const today = new Date().toISOString().split('T')[0];
-    if (existingDate === today) {
-      if (!window.confirm(`มีแบบประเมินของวันที่ ${today} อยู่แล้ว คุณต้องการเขียนทับหรือไม่?`)) return;
-    }
     const payload: Assessment = {
       patientId,
       date: today,
@@ -245,7 +389,7 @@ export default function SleepScreening({
     onSaveAssessment(payload);
     setSaveStatus('✅ บันทึกผลการคัดกรองเรียบร้อยแล้ว!');
     setTimeout(() => setSaveStatus(''), 4500);
-  }, [patientId, totalIsi, totalEss, totalStopBang, overallRisk, isiAnswers, essAnswers, stopBangAnswers, existingDate, onSaveAssessment]);
+  }, [patientId, totalIsi, totalEss, totalStopBang, overallRisk, isiAnswers, essAnswers, stopBangAnswers, onSaveAssessment]);
 
   const handleLoadExisting = useCallback(() => {
     if (existingAssessment) {
@@ -258,140 +402,241 @@ export default function SleepScreening({
   }, [existingAssessment]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
+      {/* Header และแถบเมนูประเมิน */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {onBack && (
-            <button onClick={onBack} className="p-2 rounded-full hover:bg-sleep-blue-100">
-              <ArrowLeft className="w-5 h-5" />
+            <button
+              onClick={onBack}
+              className="p-2 -ml-2 rounded-full hover:bg-sleep-blue-50 text-sleep-blue-900 transition flex items-center gap-1.5"
+            >
+              <ArrowLeft className="w-6 h-6" />
+              <span className="text-sm font-semibold text-sleep-blue-900 hidden sm:inline">ย้อนกลับ</span>
             </button>
           )}
-          <h2 className="text-2xl md:text-3xl font-semibold text-sleep-blue-900 flex items-center gap-2">
-            <ClipboardCheck className="w-6 h-6 text-sleep-gold-500" />
-            คัดกรองประเมินความเสี่ยงอาการนอนหลับ
-          </h2>
+          <div>
+            <h2 className="text-2xl md:text-3xl font-bold text-sleep-blue-900 flex items-center gap-2">
+              <ClipboardCheck className="w-7 h-7 text-sleep-gold-500" />
+              แบบประเมินสุขภาพการนอนเชิงลึก (Clinical Sleep Screening)
+            </h2>
+            <p className="text-sm text-sleep-blue-600">วิเคราะห์ภาวะนอนไม่หลับ ความง่วงเวลากลางวัน และภาวะหยุดหายใจขณะหลับ (OSA)</p>
+          </div>
         </div>
         {existingAssessment && (
-          <button onClick={handleLoadExisting} className="text-xs bg-sleep-gold-100 hover:bg-sleep-gold-200 px-4 py-2 rounded-xl">
-            ดึงข้อมูลล่าสุด ({existingAssessment.date})
+          <button
+            onClick={handleLoadExisting}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-sleep-blue-50 hover:bg-sleep-blue-100 text-sleep-blue-900 border border-sleep-blue-200 rounded-xl text-xs font-semibold transition"
+          >
+            <Activity className="w-4 h-4 text-sleep-gold-500 animate-pulse" />
+            มีประวัติของวันนี้ ({existingAssessment.date}) แล้ว
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-1 space-y-2">
-          {[
-            { id: 'isi', label: 'ISI (นอนไม่หลับ)', icon: Moon },
-            { id: 'ess', label: 'ESS (ง่วงนอนกลางวัน)', icon: Sun },
-            { id: 'stopbang', label: 'STOP-BANG (หยุดหายใจ)', icon: Activity }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => {
-                setActiveSubTab(tab.id as any);
-                if (tab.id === 'isi') setIsiIndex(0);
-                else if (tab.id === 'ess') setEssIndex(0);
-                else setStopBangIndex(0);
-              }}
-              className={`w-full text-left p-4 rounded-2xl border transition ${
-                activeSubTab === tab.id
-                  ? 'bg-sleep-blue-900 text-white border-sleep-blue-950 shadow-md'
-                  : 'bg-white text-sleep-blue-800 border-sleep-blue-100 hover:bg-sleep-blue-50'
-              }`}
+      {/* เลือกแท็บการประเมินย่อย */}
+      <div className="flex border-b border-sleep-blue-100 gap-2 overflow-x-auto pb-px">
+        <button
+          onClick={() => { setActiveSubTab('isi'); setIsiIndex(0); }}
+          className={`px-4 py-2.5 font-semibold text-sm transition-all border-b-2 flex items-center gap-2 whitespace-nowrap ${
+            activeSubTab === 'isi'
+              ? 'border-sleep-gold-500 text-sleep-blue-900'
+              : 'border-transparent text-sleep-blue-400 hover:text-sleep-blue-900'
+          }`}
+        >
+          <Moon className="w-4 h-4" />
+          1. ดัชนีความรุนแรงการนอนไม่หลับ (ISI)
+          <span className="text-xs bg-sleep-blue-50 px-2 py-0.5 rounded-full font-mono">
+            {isiAnswers.filter((v, i) => i <= isiIndex).length}/7
+          </span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('ess'); setEssIndex(0); }}
+          className={`px-4 py-2.5 font-semibold text-sm transition-all border-b-2 flex items-center gap-2 whitespace-nowrap ${
+            activeSubTab === 'ess'
+              ? 'border-sleep-gold-500 text-sleep-blue-900'
+              : 'border-transparent text-sleep-blue-400 hover:text-sleep-blue-900'
+          }`}
+        >
+          <Sun className="w-4 h-4" />
+          2. ความง่วงระหว่างวัน (ESS)
+          <span className="text-xs bg-sleep-blue-50 px-2 py-0.5 rounded-full font-mono">
+            {essAnswers.filter((v, i) => i <= essIndex).length}/8
+          </span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('stopbang'); setStopBangIndex(0); }}
+          className={`px-4 py-2.5 font-semibold text-sm transition-all border-b-2 flex items-center gap-2 whitespace-nowrap ${
+            activeSubTab === 'stopbang'
+              ? 'border-sleep-gold-500 text-sleep-blue-900'
+              : 'border-transparent text-sleep-blue-400 hover:text-sleep-blue-900'
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4" />
+          3. ความเสี่ยงการหยุดหายใจ (STOP-BANG)
+          <span className="text-xs bg-sleep-blue-50 px-2 py-0.5 rounded-full font-mono">
+            {stopBangAnswers.filter((v, i) => i <= stopBangIndex).length}/8
+          </span>
+        </button>
+      </div>
+
+      {/* พื้นที่ทำแบบสอบถามทีละข้อ */}
+      <div className="bg-white rounded-3xl p-6 shadow-sm border border-sleep-blue-100 min-h-[300px] flex flex-col justify-between font-medium">
+        <AnimatePresence mode="wait">
+          {activeSubTab === 'isi' && (
+            <motion.div
+              key={`isi-${isiIndex}`}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ x: -20, opacity: 0 }}
+              className="space-y-4"
             >
-              <span className="font-semibold text-sm flex items-center gap-2">
-                <tab.icon className="w-4 h-4 text-sleep-gold-400" />
-                {tab.label}
+              <div className="text-xs font-semibold text-sleep-gold-500 uppercase tracking-wider">
+                แบบประเมิน ISI • ข้อที่ {isiIndex + 1} จาก 7
+              </div>
+              <h3 className="text-lg font-bold text-sleep-blue-900 leading-snug">
+                {ISI_QUESTIONS[isiIndex].text}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 mt-4">
+                {ISI_QUESTIONS[isiIndex].options.map((opt, valIndex) => {
+                  const val = ISI_QUESTIONS[isiIndex].values[valIndex];
+                  const isSelected = isiAnswers[isiIndex] === val;
+                  return (
+                    <button
+                      key={valIndex}
+                      onClick={() => handleIsiChange(isiIndex, val)}
+                      className={`p-4 rounded-2xl text-center font-medium border-2 transition text-sm flex flex-col items-center justify-center gap-1.5 ${
+                        isSelected
+                          ? 'border-sleep-gold-500 bg-sleep-cream text-sleep-blue-950 font-bold shadow-xs'
+                          : 'border-gray-100 hover:border-sleep-blue-200 text-sleep-blue-500 bg-white'
+                      }`}
+                    >
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border ${
+                        isSelected ? 'bg-sleep-gold-500 border-sleep-gold-600 text-white font-bold' : 'border-gray-200'
+                      }`}>
+                        {val}
+                      </span>
+                      <span>{opt.split(' (')[0]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+
+          {activeSubTab === 'ess' && (
+            <motion.div
+              key={`ess-${essIndex}`}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ x: -20, opacity: 0 }}
+              className="space-y-4"
+            >
+              <div className="text-xs font-semibold text-sleep-gold-500 uppercase tracking-wider">
+                แบบประเมิน ESS (ประเมินตามโอกาสสุ่มงีบวูบในกิจกรรมสัปดาห์ปัจจุบัน) • ข้อที่ {essIndex + 1} จาก 8
+              </div>
+              <h3 className="text-lg font-bold text-sleep-blue-900 leading-snug">
+                สถานการณ์: {ESS_QUESTIONS[essIndex]}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mt-4">
+                {[
+                  { text: "ไม่มีโอกาสที่จะงีบหลับเลย (0)", val: 0 },
+                  { text: "มีโอกาสรินๆ งีบน้อย (1)", val: 1 },
+                  { text: "มีโอกาสปานกลางที่จะงีบ (2)", val: 2 },
+                  { text: "มีโอกาสสูงมากที่จะสลบวูบ (3)", val: 3 }
+                ].map((opt) => {
+                  const isSelected = essAnswers[essIndex] === opt.val;
+                  return (
+                    <button
+                      key={opt.val}
+                      onClick={() => handleEssChange(essIndex, opt.val)}
+                      className={`p-4 rounded-2xl text-center font-medium border-2 transition text-sm flex flex-col items-center justify-center gap-1.5 ${
+                        isSelected
+                          ? 'border-sleep-gold-500 bg-sleep-cream text-sleep-blue-950 font-bold shadow-xs'
+                          : 'border-gray-100 hover:border-sleep-blue-200 text-sleep-blue-500 bg-white'
+                      }`}
+                    >
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs border ${
+                        isSelected ? 'bg-sleep-gold-500 border-sleep-gold-600 text-white font-bold' : 'border-gray-200'
+                      }`}>
+                        {opt.val}
+                      </span>
+                      <span>{opt.text}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+
+          {activeSubTab === 'stopbang' && (
+            <motion.div
+              key={`stopbang-${stopBangIndex}`}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ x: -20, opacity: 0 }}
+              className="space-y-4"
+            >
+              <div className="text-xs font-semibold text-sleep-gold-500 uppercase tracking-wider">
+                แบบคัดกรอง STOP-BANG • ข้อที่ {stopBangIndex + 1} จาก 8
+              </div>
+              <h3 className="text-lg font-bold text-sleep-blue-900 leading-snug">
+                {STOPBANG_QUESTIONS[stopBangIndex]}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 max-w-md">
+                <button
+                  onClick={() => handleStopBangChange(stopBangIndex, 1)}
+                  className={`p-4 rounded-2xl text-center font-bold border-2 transition text-sm flex items-center justify-center gap-2 ${
+                    stopBangAnswers[stopBangIndex] === 1
+                      ? 'border-sleep-gold-500 bg-sleep-cream text-sleep-blue-950 shadow-xs'
+                      : 'border-gray-100 hover:border-sleep-blue-200 text-sleep-blue-500 bg-white'
+                  }`}
+                >
+                  <Check className="w-4 h-4 text-green-600" />
+                  ใช่ (Yes) - ได้คะแนน 1 คะแนน
+                </button>
+                <button
+                  onClick={() => handleStopBangChange(stopBangIndex, 0)}
+                  className={`p-4 rounded-2xl text-center font-bold border-2 transition text-sm flex items-center justify-center gap-2 ${
+                    stopBangAnswers[stopBangIndex] === 0
+                      ? 'border-sleep-gold-500 bg-sleep-cream text-sleep-blue-950 shadow-xs'
+                      : 'border-gray-100 hover:border-sleep-blue-200 text-sleep-blue-500 bg-white'
+                  }`}
+                >
+                  ไม่มี / ไม่ใช่ (No) - 0 คะแนน
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ปุ่มเลื่อนข้อด้านล่างฟอร์มคำถาม */}
+        <div className="flex justify-between items-center border-t border-gray-100 pt-4 mt-6">
+          <button
+            onClick={clickBack}
+            className="px-4 py-2 rounded-xl border border-sleep-blue-200 text-sleep-blue-900 hover:bg-sleep-blue-50 transition font-semibold text-sm"
+          >
+            ← ย้อนกลับ
+          </button>
+          <div>
+            {activeSubTab !== 'stopbang' && (
+              <button
+                onClick={clickNext}
+                className="px-4 py-2 rounded-xl bg-sleep-blue-900 text-white font-semibold text-sm hover:bg-sleep-blue-950 transition"
+              >
+                ข้าม / ถัดไป →
+              </button>
+            )}
+            {activeSubTab === 'stopbang' && stopBangIndex === 7 && (
+              <span className="text-green-600 font-bold text-sm bg-green-50 px-3 py-1.5 rounded-lg border border-green-200 flex items-center gap-1">
+                <Check className="w-4 h-4" /> ตอบแบบทดสอบครบถ้วน
               </span>
-            </button>
-          ))}
-        </div>
-
-        <div className="lg:col-span-3 bg-white border border-sleep-blue-100 rounded-3xl p-6 shadow-sm min-h-[480px] flex flex-col justify-between">
-          <AnimatePresence mode="wait">
-            {activeSubTab === 'isi' && (
-              <motion.div key="isi" initial={{ opacity:0, x:15 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-15 }} className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold">ISI - แบบประเมินง่าย</h3>
-                  <span className="bg-sleep-blue-900 text-white text-xs px-3 py-1 rounded-full">ข้อ {isiIndex+1}/7</span>
-                </div>
-                <div className="flex justify-center gap-2">
-                  {ISI_QUESTIONS.map((_, idx) => (
-                    <button key={idx} onClick={() => setIsiIndex(idx)} className={`h-2 rounded-full transition-all ${idx===isiIndex ? 'w-6 bg-sleep-gold-500' : 'w-2 bg-sleep-blue-200'}`} />
-                  ))}
-                </div>
-                <div className="bg-sleep-cream/30 p-5 rounded-2xl space-y-4">
-                  <h4 className="text-lg font-semibold">{isiIndex+1}. {ISI_QUESTIONS[isiIndex].text}</h4>
-                  <select
-                    value={isiAnswers[isiIndex]}
-                    onChange={(e) => handleIsiChange(isiIndex, parseInt(e.target.value))}
-                    className="w-full p-3 rounded-xl border border-sleep-blue-200 bg-white"
-                  >
-                    {ISI_QUESTIONS[isiIndex].options.map((opt, i) => (
-                      <option key={i} value={i}>{opt}</option>
-                    ))}
-                  </select>
-                </div>
-              </motion.div>
             )}
-            {activeSubTab === 'ess' && (
-              <motion.div key="ess" initial={{ opacity:0, x:15 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-15 }} className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold">ESS - ระดับง่วงนอนกลางวัน</h3>
-                  <span className="bg-sleep-blue-900 text-white text-xs px-3 py-1 rounded-full">ข้อ {essIndex+1}/8</span>
-                </div>
-                <div className="flex justify-center gap-2">
-                  {ESS_QUESTIONS.map((_, idx) => (
-                    <button key={idx} onClick={() => setEssIndex(idx)} className={`h-2 rounded-full transition-all ${idx===essIndex ? 'w-6 bg-sleep-gold-500' : 'w-2 bg-sleep-blue-200'}`} />
-                  ))}
-                </div>
-                <div className="bg-sleep-cream/30 p-5 rounded-2xl space-y-4">
-                  <h4 className="text-lg font-semibold">{essIndex+1}. {ESS_QUESTIONS[essIndex]}</h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[0,1,2,3].map(v => (
-                      <button key={v} onClick={() => handleEssChange(essIndex, v)} className={`p-3 rounded-xl border ${essAnswers[essIndex]===v ? 'bg-sleep-gold-500 border-sleep-gold-600 font-bold' : 'bg-white border-sleep-blue-100'}`}>
-                        {v===0?'ไม่มีโอกาส':v===1?'เล็กน้อย':v===2?'ปานกลาง':'สูงมาก'} ({v})
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-            {activeSubTab === 'stopbang' && (
-              <motion.div key="stopbang" initial={{ opacity:0, x:15 }} animate={{ opacity:1, x:0 }} exit={{ opacity:0, x:-15 }} className="space-y-6">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-semibold">STOP-BANG - ความเสี่ยงหยุดหายใจ</h3>
-                  <span className="bg-sleep-blue-900 text-white text-xs px-3 py-1 rounded-full">ข้อ {stopBangIndex+1}/8</span>
-                </div>
-                <div className="flex justify-center gap-2">
-                  {STOPBANG_QUESTIONS.map((_, idx) => (
-                    <button key={idx} onClick={() => setStopBangIndex(idx)} className={`h-2 rounded-full transition-all ${idx===stopBangIndex ? 'w-6 bg-sleep-gold-500' : 'w-2 bg-sleep-blue-200'}`} />
-                  ))}
-                </div>
-                <div className="bg-sleep-cream/30 p-5 rounded-2xl space-y-4">
-                  <h4 className="text-lg font-semibold">{stopBangIndex+1}. {STOPBANG_QUESTIONS[stopBangIndex]}</h4>
-                  <div className="flex gap-4 justify-center">
-                    <button onClick={() => handleStopBangChange(stopBangIndex, 1)} className={`px-6 py-3 rounded-xl text-white font-bold ${stopBangAnswers[stopBangIndex]===1 ? 'bg-red-600' : 'bg-sleep-blue-900'}`}>ใช่</button>
-                    <button onClick={() => handleStopBangChange(stopBangIndex, 0)} className={`px-6 py-3 rounded-xl text-white font-bold ${stopBangAnswers[stopBangIndex]===0 ? 'bg-green-600' : 'bg-sleep-blue-900'}`}>ไม่ใช่</button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="flex justify-between items-center pt-6 mt-6 border-t">
-            <button onClick={clickBack} disabled={activeSubTab==='isi' && isiIndex===0} className="px-4 py-2 rounded-xl border disabled:opacity-40">← ย้อนกลับ</button>
-            <div>
-              {activeSubTab !== 'stopbang' && (
-                <button onClick={clickNext} className="px-4 py-2 rounded-xl bg-sleep-blue-900 text-white">ข้าม/ถัดไป →</button>
-              )}
-              {activeSubTab === 'stopbang' && stopBangIndex===7 && <span className="text-green-600">✅ ตอบครบถ้วน</span>}
-            </div>
           </div>
         </div>
       </div>
 
-      {/* สรุปผลและปุ่มบันทึก เหมือนเดิม */}
+      {/* สรุปผลและปุ่มบันทึก */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className={`p-4 rounded-2xl border ${getIsiCategory(totalIsi).bg}`}>
           <h4 className="font-semibold">ISI รวม: {totalIsi} คะแนน</h4>
@@ -407,19 +652,198 @@ export default function SleepScreening({
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl p-6 shadow border">
-        <div className="flex justify-between items-center">
-          <div className="flex gap-2"><Sparkles className="text-sleep-gold-500"/> <span>Cozmos Sleep AI</span></div>
-          <button onClick={fetchAiAdvice} disabled={loadingAdvice} className="bg-sleep-gold-500 px-4 py-2 rounded-xl text-sm">วิเคราะห์ด้วย AI</button>
+      {/* บทประเมินพฤติกรรมแยกรายข้ออย่างละเอียดสำหรับใช้ทางบ้าน */}
+      <div className="bg-white rounded-3xl p-6 shadow border border-sleep-blue-100/60">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b border-gray-50 pb-3">
+          <h4 className="font-semibold text-lg text-sleep-blue-900 flex items-center gap-2">
+            <Moon className="w-5 h-5 text-sleep-gold-500" />
+            บทประเมินพฤติกรรมรายข้อสำหรับบ้าน (Tailored Clinical Evaluation)
+          </h4>
+          <button
+            onClick={handleToggleSpeechEval}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold analytics-btn transition shadow-sm select-none ${
+              isSpeakingEval
+                ? 'bg-red-500 text-white hover:bg-red-600'
+                : 'bg-sleep-blue-900 text-white hover:bg-sleep-blue-950'
+            }`}
+          >
+            {isSpeakingEval ? (
+              <>
+                <VolumeX className="w-3.5 h-3.5" />
+                หยุดอ่านออกเสียงพฤติกรรม
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-3.5 h-3.5" />
+                ให้ AI อ่านวิเคราะห์ให้ฟัง
+              </>
+            )}
+          </button>
         </div>
-        {aiAdvice && <div className="mt-4 p-4 bg-sleep-blue-50 rounded-xl">{aiAdvice}</div>}
+
+        <div className="space-y-4 max-h-[350px] overflow-y-auto pr-2 text-sm text-sleep-blue-950">
+          <p className="text-xs text-gray-500 mb-2 font-medium">✨ คอร์สแก้ไขและเหตุผลทางวิทยาศาสตร์การนอนแยกรายข้อตามคำตอบของคุณ:</p>
+          
+          {/* ISI Review */}
+          <div className="space-y-3">
+            <h5 className="font-medium text-sleep-gold-600 border-l-2 border-sleep-gold-400 pl-2">ดัชนีและพฤติกรรมท้าทาย (ISI)</h5>
+            {isiAnswers[0] >= 2 ? (
+              <div className="p-3 bg-red-50/50 rounded-xl border border-red-100 flex gap-2">
+                <span className="text-lg">🕒</span>
+                <div>
+                  <p className="font-semibold text-red-800">มีภาวะกล่อมตัวเองยากร่วมนอนช้า (SOL &gt; 15-30 นาที)</p>
+                  <p className="text-xs text-red-700/90 mt-0.5">เกิดจากสภาวะจิตใจตื่นตัวพยายามบังคับสมองให้นอน แนะนำกฎบำบัด CBT-I คุมสิ่งเร้า (Stimulus Control): หากเริ่มล้มตัวนอน 20 นาทีแล้วยังไม่หลับ ห้ามฝืนนอนดิ้นเด็ดขาด ให้ระเห็จออกจากเตียงนั่งเก้าอี้แสงสลัว อ่านหนังสือจนง่วงย้อยค่อยกลับมานอนใหม่</p>
+                </div>
+              </div>
+            ) : null}
+            {isiAnswers[1] >= 2 ? (
+              <div className="p-3 bg-red-50/50 rounded-xl border border-red-100 flex gap-2">
+                <span className="text-lg">⚡</span>
+                <div>
+                  <p className="font-semibold text-red-800">มีปัญหาตื่นสะดุ้งกลางคืนรบกวน (ตื่นแล้วหลับต่อยาก)</p>
+                  <p className="text-xs text-red-700/90 mt-0.5">มักเกี่ยวเนื่องกับอุณหภูมิแกนตัวพุ่งสูงหรือความเครียดค้าง แนะนำงดเครื่องดื่มทุกประเภท 2.5 ชั่วโมงก่อนนอน งดสิ่งเร้าเร่งด่วน และรักษาห้องนอนที่ 24-25°C เพื่อคงสมาธิร่างกายช่วงนอนหลับลึก</p>
+                </div>
+              </div>
+            ) : null}
+            {isiAnswers[2] >= 2 ? (
+              <div className="p-3 bg-red-50/50 rounded-xl border border-red-100 flex gap-2">
+                <span className="text-lg">🌅</span>
+                <div>
+                  <p className="font-semibold text-red-800">ตื่นเช้าผิดปกติพลางนาฬิกาชีวิตหดสั้น</p>
+                  <p className="text-xs text-red-700/90 mt-0.5">ห้ามมองหาหรือจับมือถือมาปัดเช็กทันทีหลังจากตื่น เพราะแสงสีฟ้าล่อใจจะประเมินสัญญาณตื่นให้สมองและยุติหลับทันที แนะนำปล่อยความรู้สึกหลวมๆ ในห้องมืดสลัว</p>
+                </div>
+              </div>
+            ) : null}
+            {isiAnswers[5] >= 2 ? (
+              <div className="p-3 bg-amber-50/50 rounded-xl border border-amber-100 flex gap-2">
+                <span className="text-lg">🧠</span>
+                <div>
+                  <p className="font-semibold text-amber-800">มีความคิดหมุนวนกังวลเรื่องการนอนสูง</p>
+                  <p className="text-xs text-amber-700/90 mt-0.5">จิตใต้สำนึกระแวง ส่งผลให้สมองหลั่งฮอร์โมนตื่นเตลิด แนะนำบำบัดด้วย Brain Dump (จดระบายทุกความกังวลใส่กระดาษ) 1.5 ชั่วโมงก่อนนอน เพื่อให้สมองเคลียร์ช่องทางสื่อสารเสร็จสิ้น</p>
+                </div>
+              </div>
+            ) : null}
+            {isiAnswers[0] < 2 && isiAnswers[1] < 2 && isiAnswers[2] < 2 && isiAnswers[5] < 2 ? (
+              <p className="text-xs text-green-600 pl-2">✓ สัญญาณด้านสรีระกระตุ้นการนอนไม่หลับสมดุลดีเลิศ</p>
+            ) : null}
+          </div>
+
+          {/* ESS Review */}
+          <div className="space-y-3 pt-2">
+            <h5 className="font-medium text-sleep-blue-600 border-l-2 border-sleep-blue-400 pl-2">พฤติกรรมความง่วงกลางวันสะสม (ESS)</h5>
+            {essAnswers.some(v => v >= 2) ? (
+              <div className="p-3 bg-sleep-blue-50/40 rounded-xl border border-sleep-blue-100 flex gap-2">
+                <span className="text-lg">🥱</span>
+                <div>
+                  <p className="font-semibold text-sleep-blue-800">พบคะแนนง่วงเฉียบพลันช่วงกลางวันปานกลาง-สูงในบางกิจกรรม</p>
+                  <p className="text-xs text-sleep-blue-700 mt-0.5">บ่งชี้ว่าคุณภาพการนอนหลับลึกโบยบินหายไป (Sleep Quality Loss) ทำให้สมองไม่ได้รับการกำจัดกรดสารเคมีอย่างเพียงพอก่อนลืมตา แนะนำงดงีบหลับกลางวันที่ยาวเกิน 25 นาทีในช่วงบ่าย เพื่อไม่ให้ดึงพลังหลับลึกของคืนถัดไปลดลง</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-green-600 pl-2">✓ การตื่นสมาธิความโปร่งใสกลางวันปกติสมบูรณ์</p>
+            )}
+          </div>
+
+          {/* STOP-BANG Review */}
+          <div className="space-y-3 pt-2">
+            <h5 className="font-medium text-red-600 border-l-2 border-red-400 pl-2">โครงสร้างสอดรับความเสี่ยงหายใจขัดข้อง (STOP-BANG)</h5>
+            {stopBangAnswers[0] === 1 ? (
+              <div className="p-3 bg-red-50/50 rounded-xl border border-red-100 flex gap-2">
+                <span className="text-lg">📢</span>
+                <div>
+                  <p className="font-semibold text-red-800">มีอาการนอนกรนส่งเสียงสะเทือนรบกวน</p>
+                  <p className="text-xs text-red-700/90 mt-0.5">เกิดจากสรีระกล้ามเนื้อคอคลายตกอุดลมหายใจเป็นช่วงๆ แนะนำฝืนฝึกนอนตะแคงข้างตัว (กอดหมอนข้างทรงสปริงแข็ง) เพื่อเหนี่ยวแนวหลอดลมให้เบาสบายสม่ำเสมอ</p>
+                </div>
+              </div>
+            ) : null}
+            {stopBangAnswers[2] === 1 ? (
+              <div className="p-3 bg-red-100/50 rounded-xl border border-red-200 flex gap-2">
+                <span className="text-lg">⚠️</span>
+                <div>
+                  <p className="font-semibold text-red-950">มีผู้พบเจอสะดุ้งตัวสลึมตื่นสำลักอากาศกลางดึก</p>
+                  <p className="text-xs text-red-800 mt-0.5">เป็นสัญญาณบอกเหตุของภาวะหยุดหายใจที่อันตรายสูงสุดสะสม แนะนำรีบติดต่อศูนย์โรคการนอนหลับเพื่อตรวจคัดกรอง Sleep Test หรือติดต่อแพทย์เฉพาะทาง อย่าละเลยเด็ดขาด</p>
+                </div>
+              </div>
+            ) : null}
+            {stopBangAnswers[3] === 1 ? (
+              <div className="p-3 bg-amber-50/40 rounded-xl border border-amber-100 flex gap-2">
+                <span className="text-lg">🛑</span>
+                <div>
+                  <p className="font-semibold text-amber-800">มีภาวะความดันโลหิตสูงรุมเร้าประจำตัว</p>
+                  <p className="text-xs text-amber-700/90 mt-0.5">โรคหลอดเลือดคุมยากสัมพันธ์กับการบีบคาร์บอนฯ มะรุมมะตุ้มขาดอากาศเวลากระดูกล้มตัวกรนสลบ ควรพกพาเครื่องวัดความดันคอยมอนิเตอร์หลังลืมตาทุกเช้า</p>
+                </div>
+              </div>
+            ) : null}
+            {stopBangAnswers[6] === 1 ? (
+              <div className="p-3 bg-amber-50/40 rounded-xl border border-amber-100 flex gap-2">
+                <span className="text-lg">🧣</span>
+                <div>
+                  <p className="font-semibold text-amber-800">ขนาดรอบลำคอพังพานใหญ่เกินเกณฑ์เฉลี่ย</p>
+                  <p className="text-xs text-amber-700/90 mt-0.5">มีโอกาสท่ออากาศเปิดแคบได้เร็วกว่าคนปกติ แนะนำหนุนไหล่สะโพกสูง 15-30 องศาขณะเอนหัวนอนเพื่อหนีแนวโน้มหลอดลมหุบปิดพับ</p>
+                </div>
+              </div>
+            ) : null}
+            {stopBangAnswers[0] !== 1 && stopBangAnswers[2] !== 1 && stopBangAnswers[3] !== 1 && stopBangAnswers[6] !== 1 ? (
+              <p className="text-xs text-green-600 pl-2">✓ สภาพแนวทางลมหายใจหลอดลมสะดวกโยธินปลอดโปร่ง</p>
+            ) : null}
+          </div>
+        </div>
       </div>
 
-      <div className="flex justify-between items-center">
-        <div className="text-xs text-gray-500"><AlertTriangle className="inline w-4 h-4"/> การประเมินเบื้องต้น ไม่สามารถทดแทนการวินิจฉัยจากแพทย์</div>
-        <div className="flex gap-3">
-          {saveStatus && <span className="text-green-600 text-sm">{saveStatus}</span>}
-          <button onClick={handleSubmit} className="bg-sleep-gold-500 px-6 py-2 rounded-xl font-bold">บันทึกผลประเมิน</button>
+      <div className="bg-white rounded-3xl p-6 shadow border">
+        <div className="flex justify-between items-center bg-white">
+          <div className="flex gap-2 items-center"><Sparkles className="text-sleep-gold-500 w-5 h-5"/> <span className="font-bold text-sleep-blue-900 text-base">Cozmos Sleep AI Analyst</span></div>
+          <button 
+            onClick={fetchAiAdvice} 
+            disabled={loadingAdvice} 
+            className="bg-sleep-gold-500 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-sleep-gold-400 leading-none h-[38px] flex items-center justify-center text-sleep-blue-950 transition"
+          >
+            {loadingAdvice ? 'กำลังวิเคราะห์ด้วย AI...' : 'วิเคราะห์ด้วย AI'}
+          </button>
+        </div>
+        {aiAdvice && (
+          <div className="mt-4 p-4 bg-sleep-blue-50/80 rounded-xl border border-sleep-blue-100 md:p-5">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-sleep-blue-100/50 p-3 rounded-xl border border-sleep-blue-100/80 gap-2 mb-4">
+              <span className="text-xs text-sleep-blue-900 font-medium flex items-center gap-1.5 leading-normal">
+                <Sparkles className="w-3.5 h-3.5 text-sleep-gold-500 animate-pulse flex-shrink-0" />
+                มีเสียงโค้ช AI คอสมอสคอยอ่านภาษาไทยวิจัยเรื่องการนอนให้คุณฟัง:
+              </span>
+              <button
+                onClick={handleToggleSpeech}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm select-none ${
+                  isSpeaking
+                    ? 'bg-red-500 text-white hover:bg-red-600'
+                    : 'bg-sleep-blue-900 text-white hover:bg-sleep-blue-950'
+                }`}
+              >
+                {isSpeaking ? (
+                  <>
+                    <VolumeX className="w-3.5 h-3.5" />
+                    หยุดอ่านออกเสียง
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3.5 h-3.5" />
+                    ให้ AI อ่านให้ฟัง
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="whitespace-pre-wrap text-sm leading-relaxed text-sleep-blue-950 font-normal">{aiAdvice}</div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col sm:flex-row justify-between items-center bg-sleep-cream/10 p-4 rounded-2xl border border-sleep-blue-50/80 gap-4">
+        <div className="text-xs text-gray-500 flex items-center gap-2 max-w-xl"><AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0"/> การประเมินเบื้องต้นตามแบบสกรีนนิ่งระดับวิจัยวิชาการทางคลินิก ไม่สามารถทดแทนการสั่งการหรือวินิจฉัยจากแพทย์โรคการนอนหลับเฉพาะทางโดยตรง</div>
+        <div className="flex gap-4 items-center justify-end w-full sm:w-auto">
+          {saveStatus && <span className="text-green-600 text-xs font-semibold animate-pulse shrink-0">{saveStatus}</span>}
+          <button 
+            onClick={handleSubmit} 
+            className="bg-sleep-blue-900 hover:bg-sleep-blue-950 text-white px-6 py-2.5 rounded-xl font-bold transition text-sm flex items-center gap-1.5 shadow-sm active:scale-95 select-none shrink-0"
+          >
+            บันทึกผลประเมิน
+          </button>
         </div>
       </div>
     </div>
