@@ -122,28 +122,7 @@ export default function Introduction({
         </div>
       </div>
 
-      {/* 5 โมดูล (เหมือนเดิม) */}
-      <div>
-        <h2 className="text-xl font-medium text-sleep-blue-900 mb-4 flex items-center gap-2">
-          <Layers className="w-5 h-5 text-sleep-gold-500" />
-          5 โมดูลหลักสุขภาพการนอนในบ้าน
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[
-            { step: 1, title: 'คัดกรองความเสี่ยงการนอน', desc: 'ISI, ESS, STOP-BANG' },
-            { step: 2, title: 'บันทึกพฤติกรรมรายวัน', desc: 'เวลาหลับ, ความเครียด, คาเฟอีน' },
-            { step: 3, title: 'กิจกรรมช่วยผ่อนคลาย', desc: 'หายใจ 4-7-8, เสียงบำบัด' },
-            { step: 4, title: 'จดสติและถอดเสียงด้วย AI', desc: 'วิเคราะห์อารมณ์' },
-            { step: 5, title: 'วิเคราะห์สถิติมุมมองรวม', desc: 'Dashboard & รายงาน' }
-          ].map(m => (
-            <div key={m.step} className="bg-white p-5 rounded-2xl border border-sleep-blue-100 shadow-sm">
-              <div className="w-10 h-10 bg-sleep-gold-100 text-sleep-gold-500 rounded-xl flex items-center justify-center font-bold text-lg mb-2">{m.step}</div>
-              <h3 className="font-semibold text-sleep-blue-900">{m.title}</h3>
-              <p className="text-xs text-sleep-blue-600">{m.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+
 
       {/* สมาชิกในครอบครัว */}
       <div className="bg-white rounded-3xl p-6 border border-sleep-blue-100 shadow-sm space-y-6">
