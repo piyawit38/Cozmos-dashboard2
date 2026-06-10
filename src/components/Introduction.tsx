@@ -194,9 +194,7 @@ export default function Introduction({ users, activePatientId, onSelectPatient, 
                 </button>
               </div>
             )}
-            <p className="text-sleep-blue-100 text-sm max-w-xl">
-              ผสานสุขวิทยาการนอน ศิลปะ และปัญญาประดิษฐ์ เพื่อสร้างความเข้าใจการนอนและยกระดับคุณภาพชีวิต
-            </p>
+           
           </div>
         </div>
       </div>
