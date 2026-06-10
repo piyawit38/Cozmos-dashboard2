@@ -12,7 +12,7 @@ import WellnessIntervention from './components/WellnessIntervention';
 import AIReflection from './components/AIReflection';
 import LookerDashboard from './components/LookerDashboard';
 import SheetsDatabase from './components/SheetsDatabase';
-import { LayoutGrid, Users, Heart, Sparkles, Database, FileSpreadsheet, Moon, Activity, Info, LogOut, Check, ChevronDown, Award } from 'lucide-react';
+import { LayoutGrid, Users, Heart, Sparkles, Database, Moon, Activity, Check, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
@@ -34,20 +34,47 @@ export default function App() {
   // Dropdown UI triggers
   const [showPatientDropdown, setShowPatientDropdown] = useState(false);
 
-  // Fetch fully synchronized state from local express DB
+  // ---------- Family Name State (อ่านจาก localStorage) ----------
+  const [familyName, setFamilyName] = useState<string>(() => {
+    return localStorage.getItem('cozmos_family_name') || 'ครอบครัวสุขสันต์';
+  });
+
+  // ฟังการเปลี่ยนแปลงของ localStorage จากแท็บอื่น (หรือภายในแอป)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'cozmos_family_name') {
+        setFamilyName(e.newValue || 'ครอบครัวสุขสันต์');
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // เพิ่ม polling เพื่ออัปเดตเมื่อมีการเปลี่ยนแปลงภายในแอปเดียวกัน (storage event ใช้ได้แค่ข้ามแท็บ)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const current = localStorage.getItem('cozmos_family_name');
+      if (current && current !== familyName) {
+        setFamilyName(current);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [familyName]);
+
+  // ----------------------------------------------------------------------
+  // ส่วนโหลดข้อมูล, saveStateToServer, การจัดการ users และอื่นๆ (เหมือนเดิม)
+  // ----------------------------------------------------------------------
+
   const loadDatabaseStore = async () => {
     try {
       setLoading(true);
       
-      // Let's try reading LocalStorage first as the primary master of member selections/deletions
       const localDataStr = localStorage.getItem('cozmos_db_v1');
       if (localDataStr) {
         try {
           const localData = JSON.parse(localDataStr) as DatabaseState;
           if (localData && Array.isArray(localData.users) && localData.users.length > 0) {
             setDatabase(localData);
-            
-            // Push full local storage state as backup to express server
             await fetch('/api/store/sync-full', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -57,14 +84,13 @@ export default function App() {
             if (localData.users.length > 0 && !localData.users.some((u: any) => u.patientId === activePatientId)) {
               setActivePatientId(localData.users[0].patientId);
             }
-            return; // Finished loading successfully from persistent local storage master
+            return;
           }
         } catch (e) {
           console.error("Local storage Parse error", e);
         }
       }
 
-      // If no local storage exists, fall back to loading from server's file database path
       const resp = await fetch('/api/store');
       const serverData = await resp.json();
       if (serverData && serverData.users) {
@@ -76,7 +102,6 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to load local database state", err);
-      // Emergency retrieval from localStorage in case of system offline state
       const localDataStr = localStorage.getItem('cozmos_db_v1');
       if (localDataStr) {
         try {
@@ -96,14 +121,12 @@ export default function App() {
     loadDatabaseStore();
   }, []);
 
-  // Set up secondary master trigger so that any changes to LocalState database automatically writes to LocalStorage
   useEffect(() => {
     if (database && database.users && database.users.length > 0) {
       localStorage.setItem('cozmos_db_v1', JSON.stringify(database));
     }
   }, [database]);
 
-  // Post update utility
   const saveStateToServer = async (payload: { diary?: SleepDiary; factors?: DailyFactors; assessment?: Assessment; wellness?: WellnessUsage; journal?: Journal }) => {
     try {
       setSyncMessage('🔄 กำลังผสานส่งข้อมูลหา Google Sheets...');
@@ -120,7 +143,6 @@ export default function App() {
       }
     } catch (err) {
       console.error("Failed to sync state to server", err);
-      // Fallback update local state database directly, so user has instant offline logging capabilities too!
       setDatabase(prev => {
         const next = { ...prev };
         if (payload.diary) {
@@ -155,9 +177,7 @@ export default function App() {
     }
   };
 
-  // Profile lifecycle methods
   const handleCreatePatient = async (newUser: User) => {
-    // 1. Immediately update client state for responsive UI transitions
     setDatabase(prev => {
       const updatedUsers = [...prev.users];
       const existingIdx = updatedUsers.findIndex(u => u.patientId === newUser.patientId);
@@ -169,9 +189,8 @@ export default function App() {
       return { ...prev, users: updatedUsers };
     });
     setActivePatientId(newUser.patientId);
-    setActiveTab('screening'); // transition directly to assessments
+    setActiveTab('screening');
 
-    // 2. Sync history to the API backend in the background
     try {
       const resp = await fetch('/api/store/user', {
         method: 'POST',
@@ -188,13 +207,11 @@ export default function App() {
   };
 
   const handleUpdatePatient = async (updatedUser: User) => {
-    // 1. Instantly update client state database
     setDatabase(prev => {
       const updatedUsers = prev.users.map(u => u.patientId === updatedUser.patientId ? updatedUser : u);
       return { ...prev, users: updatedUsers };
     });
 
-    // 2. background post to server
     try {
       const resp = await fetch('/api/store/user', {
         method: 'POST',
@@ -220,7 +237,6 @@ export default function App() {
 
       setSyncMessage('🔄 กำลังลบข้อมูลสมาชิก...');
 
-      // Find next patient id to activate if deleting the active one
       let nextPatientId = activePatientId;
       if (activePatientId === patientId) {
         const remainingUsers = database.users.filter(u => u.patientId !== patientId);
@@ -229,23 +245,19 @@ export default function App() {
         }
       }
 
-      // 1. Immediately update client state database (additionally removes patient's related records from dairy/assessments)
-      setDatabase(prev => {
-        return {
-          ...prev,
-          users: prev.users.filter(u => u.patientId !== patientId),
-          sleepDiary: prev.sleepDiary.filter(d => d.patientId !== patientId),
-          dailyFactors: prev.dailyFactors.filter(f => f.patientId !== patientId),
-          assessments: prev.assessments.filter(a => a.patientId !== patientId),
-          wellnessUsage: prev.wellnessUsage.filter(w => w.patientId !== patientId),
-          journals: prev.journals.filter(j => j.patientId !== patientId),
-        };
-      });
+      setDatabase(prev => ({
+        ...prev,
+        users: prev.users.filter(u => u.patientId !== patientId),
+        sleepDiary: prev.sleepDiary.filter(d => d.patientId !== patientId),
+        dailyFactors: prev.dailyFactors.filter(f => f.patientId !== patientId),
+        assessments: prev.assessments.filter(a => a.patientId !== patientId),
+        wellnessUsage: prev.wellnessUsage.filter(w => w.patientId !== patientId),
+        journals: prev.journals.filter(j => j.patientId !== patientId),
+      }));
       setActivePatientId(nextPatientId);
       setSyncMessage('✅ ลบข้อมูลสมาชิกสำเร็จ!');
       setTimeout(() => setSyncMessage(''), 3000);
 
-      // 2. Perform backend actual delete request
       const resp = await fetch(`/api/store/user/${patientId}`, {
         method: 'DELETE'
       });
@@ -259,12 +271,10 @@ export default function App() {
     }
   };
 
-  // Log screening score
   const handleSaveScreening = (assessment: Assessment) => {
     saveStateToServer({ assessment });
   };
 
-  // Log Daily log
   const handleSaveDailyLog = (diary: SleepDiary, factors: DailyFactors, weight?: number, height?: number) => {
     saveStateToServer({ diary, factors });
     if (weight && height && activeUser) {
@@ -278,12 +288,10 @@ export default function App() {
     }
   };
 
-  // Log intervention statistics usage
   const handleLogWellnessUsage = (wellness: WellnessUsage) => {
     saveStateToServer({ wellness });
   };
 
-  // Log audio journal
   const handleSaveJournalRecord = (journal: Journal) => {
     saveStateToServer({ journal });
   };
@@ -292,7 +300,6 @@ export default function App() {
   const userAssessmentsList = database.assessments.filter(a => a.patientId === activePatientId);
   const activeUserLatestScreening = userAssessmentsList[userAssessmentsList.length - 1];
 
-  // Helper variables for widgets
   const totalDiariesLogged = database.sleepDiary.filter(d => d.patientId === activePatientId).length;
   const averageSleepDuration = totalDiariesLogged 
     ? (database.sleepDiary.filter(d => d.patientId === activePatientId).reduce((sum, d) => sum + d.sleepDuration, 0) / totalDiariesLogged).toFixed(1)
@@ -310,17 +317,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0B1026] bg-gradient-to-b from-[#0B1026] via-[#0d1330] to-[#080b1e] text-sleep-blue-950 flex flex-col font-sans select-none pb-12">
-      {/* Visual Header Grid replicating warm non-academic blue and yellow tone suitable for all ages */}
       <header className="bg-sleep-blue-900 text-white px-6 py-4 border-b border-sleep-blue-100 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-sleep-gold-400 rounded-2xl flex items-center justify-center text-[#0B1026] glow-gold">
+            <div className="w-11 h-11 bg-sleep-gold-400 rounded-2xl flex items-center justify-center text-[#0B1026]">
               <Moon className="w-6 h-6 fill-current" />
             </div>
             <div>
-              <h1 className="text-xl md:text-2xl font-bold text-sleep-gold-400 tracking-tight flex items-center gap-2">
-                Cozmos เทคโนโลยีดูแลการนอนของครอบครัว
-                <span className="text-[11px] bg-white/10 text-sleep-gold-400 px-2 py-0.5 border border-white/20 rounded font-normal md:inline hidden tracking-wider font-sans"></span>
+              <h1 className="text-xl md:text-2xl font-bold text-sleep-gold-400 tracking-tight flex items-center gap-2 flex-wrap">
+                Cozmos เทคโนโลยีดูแลการนอนของ
+                <span className="bg-white/10 px-2 py-0.5 rounded border border-white/20 text-sleep-gold-400 ml-1">
+                  {familyName}
+                </span>
               </h1>
               <p className="text-xs text-sleep-blue-100 font-light mt-0.5">
                 ระบบจัดการและดูแลสุขภาวะการนอนหลับระดับครอบครัว เฝ้าระวังความเสี่ยงหยุดหายใจขณะหลับเบื้องต้น และบันทึกพฤติกรรมประจำวันในบ้าน
@@ -328,14 +336,12 @@ export default function App() {
             </div>
           </div>
 
-          {/* Sync indicator widget */}
           {syncMessage && (
             <div className="bg-white/10 border border-white/20 text-xs text-sleep-gold-400 px-3 py-1.5 rounded-xl font-mono animate-bounce md:inline hidden">
               {syncMessage}
             </div>
           )}
 
-          {/* Right Side: Quick Active Patient Swapper Dropdown */}
           <div className="flex gap-4 items-center relative select-none">
             {activeUser && (
               <div className="flex gap-2 items-center text-right md:inline hidden">
@@ -346,13 +352,11 @@ export default function App() {
               </div>
             )}
 
-            {/* Simulated Select Input dropdown */}
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setShowPatientDropdown(!showPatientDropdown)}
                 className="bg-sleep-blue-955 border border-white/20 text-xs text-white px-3.5 py-2 rounded-xl flex items-center gap-2"
-                id="btn-select-patient-header"
               >
                 <span>เลือกสมาชิก</span>
                 <ChevronDown className={`w-4 h-4 text-sleep-gold-400 transition-transform ${showPatientDropdown ? 'rotate-180' : ''}`} />
@@ -364,7 +368,7 @@ export default function App() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
-                    className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-sleep-blue-100 text-sleep-blue-950 text-xs overflow-hidden py-1 z-50 animate-shadow"
+                    className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-sleep-blue-100 text-sleep-blue-950 text-xs overflow-hidden py-1 z-50"
                   >
                     <div className="p-2 border-b border-sleep-blue-50 text-[10px] text-sleep-blue-400 uppercase tracking-widest block font-medium">สลับสมาชิกครอบครัว</div>
                     <div className="max-h-48 overflow-y-auto">
@@ -401,20 +405,15 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Container Layout */}
       <main className="max-w-7xl w-full mx-auto px-6 mt-6 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Side menu sidebar navigator */}
         <section className="col-span-1 lg:col-span-3 space-y-4">
-          {/* Quick Active user Profile card view indicator */}
           {activeUser && (
             <div className="bg-sleep-blue-900 text-white rounded-3xl p-5 border border-sleep-blue-950 relative overflow-hidden shadow">
               <div className="absolute top-0 right-0 w-20 h-20 bg-sleep-gold-400/15 rounded-full blur-xl -mr-6 -mt-6"></div>
-              
               <div className="flex gap-2 items-center pb-3 border-b border-white/10 mb-3">
                 <Users className="w-5 h-5 text-sleep-gold-400" />
                 <h5 className="font-semibold text-xs text-sleep-gold-400 uppercase tracking-wider block font-medium">บันทึกประวัติสุขภาพ Cozmos</h5>
               </div>
-
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span className="text-sleep-blue-200 font-light">รหัสสมาชิกครอบครัว:</span>
@@ -432,8 +431,6 @@ export default function App() {
                   <span className="text-sleep-blue-200 font-light">โรคประจำตัว:</span>
                   <strong className="text-white truncate max-w-[110px] block text-right">{activeUser.chronicDiseases || "ไม่มี"}</strong>
                 </div>
-                
-                {/* Screening outcome badge */}
                 <div className="flex justify-between border-t border-white/10 pt-2.5 mt-2 flex-col gap-1 text-center">
                   <span className="text-sleep-blue-200 font-light block leading-none text-left">ความเสี่ยงหยุดหายใจสะสม:</span>
                   {activeUserLatestScreening ? (
@@ -453,9 +450,7 @@ export default function App() {
             </div>
           )}
 
-          {/* Module tabs Navigator side navigation block */}
-          <div className="bg-white border border-sleep-blue-100 rounded-3xl p-4 shadow-sm space-y-1" id="main-navigation">
-            
+          <div className="bg-white border border-sleep-blue-100 rounded-3xl p-4 shadow-sm space-y-1">
             <button
               onClick={() => setActiveTab('welcome')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -464,11 +459,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Users className="w-4 h-4" /> ส่วนต้อนรับ & สมาชิกในบ้าน
-              </span>
+              <span className="flex items-center gap-2"><Users className="w-4 h-4" /> ส่วนต้อนรับ & สมาชิกในบ้าน</span>
             </button>
-
             <button
               onClick={() => setActiveTab('screening')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -477,11 +469,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Heart className="w-4 h-4 text-red-500" /> ประเมินความเสี่ยงการนอน
-              </span>
+              <span className="flex items-center gap-2"><Heart className="w-4 h-4 text-red-500" /> ประเมินความเสี่ยงการนอน</span>
             </button>
-
             <button
               onClick={() => setActiveTab('tracking')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -490,11 +479,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Moon className="w-4 h-4 text-indigo-700" /> บันทึกพฤติกรรมประจำวัน
-              </span>
+              <span className="flex items-center gap-2"><Moon className="w-4 h-4 text-indigo-700" /> บันทึกพฤติกรรมประจำวัน</span>
             </button>
-
             <button
               onClick={() => setActiveTab('wellness')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -503,11 +489,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> กิจกรรมช่วยผ่อนคลาย
-              </span>
+              <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> กิจกรรมช่วยผ่อนคลาย</span>
             </button>
-
             <button
               onClick={() => setActiveTab('reflection')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -516,11 +499,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-blue-650" /> จดบันทึกและวิเคราะห์จิตใจ
-              </span>
+              <span className="flex items-center gap-2"><Activity className="w-4 h-4 text-blue-650" /> จดบันทึกและวิเคราะห์จิตใจ</span>
             </button>
-
             <button
               onClick={() => setActiveTab('looker')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -529,11 +509,8 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <LayoutGrid className="w-4 h-4 text-emerald-500" /> แดชบอร์ดสุขภาพครอบครัว
-              </span>
+              <span className="flex items-center gap-2"><LayoutGrid className="w-4 h-4 text-emerald-500" /> แดชบอร์ดสุขภาพครอบครัว</span>
             </button>
-
             <button
               onClick={() => setActiveTab('database')}
               className={`w-full text-left p-3 rounded-2xl text-sm font-semibold flex items-center justify-between transition ${
@@ -542,15 +519,12 @@ export default function App() {
                   : 'text-sleep-blue-700 hover:bg-sleep-blue-50'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Database className="w-4 h-4" /> คลังระเบียนบันทึกครอบครัว
-              </span>
+              <span className="flex items-center gap-2"><Database className="w-4 h-4" /> คลังระเบียนบันทึกครอบครัว</span>
             </button>
           </div>
         </section>
 
-        {/* Central screen tab content displaying reactive modules */}
-        <section className="col-span-1 lg:col-span-9" id="main-content-canvas_wrapper">
+        <section className="col-span-1 lg:col-span-9">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -571,7 +545,6 @@ export default function App() {
                   onDeleteUser={handleDeletePatient}
                 />
               )}
-
               {activeTab === 'screening' && (
                 <SleepScreening
                   patientId={activePatientId}
@@ -579,7 +552,6 @@ export default function App() {
                   existingAssessment={userAssessmentsList[userAssessmentsList.length - 1]}
                 />
               )}
-
               {activeTab === 'tracking' && (
                 <DailyTracking
                   patientId={activePatientId}
@@ -590,14 +562,12 @@ export default function App() {
                   existingFactors={database.dailyFactors.find(f => f.patientId === activePatientId && f.date === new Date().toISOString().split('T')[0])}
                 />
               )}
-
               {activeTab === 'wellness' && (
                 <WellnessIntervention
                   patientId={activePatientId}
                   onLogWellnessUsage={handleLogWellnessUsage}
                 />
               )}
-
               {activeTab === 'reflection' && (
                 <AIReflection
                   patientId={activePatientId}
@@ -606,14 +576,12 @@ export default function App() {
                   currentDailyFactors={database.dailyFactors.find(f => f.patientId === activePatientId && f.date === new Date().toISOString().split('T')[0])}
                 />
               )}
-
               {activeTab === 'looker' && (
                 <LookerDashboard
                   database={database}
                   activePatientId={activePatientId}
                 />
               )}
-
               {activeTab === 'database' && (
                 <SheetsDatabase
                   database={database}
@@ -624,8 +592,6 @@ export default function App() {
           </AnimatePresence>
         </section>
       </main>
-
-      
     </div>
   );
 }
