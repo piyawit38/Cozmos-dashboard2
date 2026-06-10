@@ -163,10 +163,10 @@ export default function Introduction({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2"><label>ชื่อ-นามสกุล</label><input type="text" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full border rounded-lg p-2" required /></div>
               <div><label>เพศ</label><select value={gender} onChange={e => setGender(e.target.value as any)} className="w-full border rounded-lg p-2"><option>ชาย</option><option>หญิง</option><option>อื่นๆ</option></select></div>
-              <div><label>อายุ</label><input type="number" value={age} onChange={e => setAge(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
+              <div><label>อายุ</label><input type="number" value={age || ''} onChange={e => setAge(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
               <div><label>วันเกิด</label><input type="date" value={birthDate} onChange={e => handleBirthDateChange(e.target.value)} className="w-full border rounded-lg p-2" /></div>
-              <div><label>น้ำหนัก (กก.)</label><input type="number" value={weight} onChange={e => setWeight(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
-              <div><label>ส่วนสูง (ซม.)</label><input type="number" value={height} onChange={e => setHeight(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
+              <div><label>น้ำหนัก (กก.)</label><input type="number" value={weight || ''} onChange={e => setWeight(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
+              <div><label>ส่วนสูง (ซม.)</label><input type="number" value={height || ''} onChange={e => setHeight(Number(e.target.value))} className="w-full border rounded-lg p-2" /></div>
               <div className="md:col-span-3"><label>โรคประจำตัว</label><input type="text" value={chronic} onChange={e => setChronic(e.target.value)} placeholder="เช่น แพ้อากาศ, ความดัน" className="w-full border rounded-lg p-2" /></div>
             </div>
             <div className="flex justify-end gap-2">
