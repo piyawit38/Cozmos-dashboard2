@@ -148,7 +148,7 @@ export default function Introduction({
       {/* สมาชิกในครอบครัว */}
       <div className="bg-white rounded-3xl p-6 border border-sleep-blue-100 shadow-sm space-y-6">
         <div className="flex justify-between items-center flex-wrap gap-4">
-          <h2 className="text-xl font-medium flex items-center gap-2"><UserCheck className="w-5 h-5 text-sleep-gold-400" /> สมาชิกใน{familyName}</h2>
+          <h2 className="text-xl font-medium flex items-center gap-2"><UserCheck className="w-5 h-5 text-sleep-gold-400" /> สมาชิกครอบครัว</h2>
           {!isCreating && (
             <button onClick={() => setIsCreating(true)} className="bg-sleep-gold-500 hover:bg-sleep-gold-400 text-sleep-blue-950 font-medium px-4 py-2 rounded-xl flex items-center gap-2">
               <UserPlus className="w-4 h-4" /> เพิ่มสมาชิก
