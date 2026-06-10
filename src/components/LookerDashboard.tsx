@@ -568,7 +568,7 @@ export default function LookerDashboard({ database, activePatientId }: LookerDas
 
       {/* Main Canvas */}
       <div className="bg-white border-3 border-sleep-blue-900 rounded-3xl overflow-hidden shadow-lg min-h-[480px]">
-        <div className="bg-sleep-blue-950 text-white p-4 px-6 flex justify-between items-center flex-col sm:flex-row gap-3 border-b border-sleep-blue-900">
+        <div className="bg-sleep-blue-900 text-white p-4 px-6 flex justify-between items-center flex-col sm:flex-row gap-3 border-b border-sleep-blue-900">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
             <h3 className="font-mono text-xs text-sleep-gold-400 font-bold tracking-wider">
