@@ -13,6 +13,8 @@ export interface User {
   height: number; // cm
   bmi: number;
   chronicDiseases: string;
+  defaultBedTime?: string;
+  defaultWakeTime?: string;
 }
 
 export interface SleepDiary {
@@ -42,6 +44,9 @@ export interface Assessment {
   ess: number; // Epworth Sleepiness Scale (0-24)
   stopBang: number; // STOP-BANG Score (0-8)
   riskLevel: 'ต่ำ' | 'ปานกลาง' | 'สูง' | string;
+  isiAnswers?: number[];
+  essAnswers?: number[];
+  stopBangAnswers?: number[];
 }
 
 export interface WellnessUsage {
@@ -52,7 +57,7 @@ export interface WellnessUsage {
   rainSound: number; // minutes
   oceanSound: number; // minutes
   forestSound: number; // minutes
-   khandiSound: number;
+  khandiSound?: number;
   breathingSession: number; // times
   brainDump: number; // times
 }
@@ -66,6 +71,16 @@ export interface Journal {
   aiInsight: string;
 }
 
+export interface VitalSign {
+  patientId: string;
+  date: string; // YYYY-MM-DD
+  systolic: number;   // ความดันตัวบน
+  diastolic: number;  // ความดันตัวล่าง
+  bloodSugar: number; // น้ำตาลในเลือด (mg/dL)
+  cholesterol: number; // คอเลสเตอรอลรวม (mg/dL)
+  triglyceride?: number; // ไตรกลีเซอไรด์ (optional)
+  notes?: string;
+}
 export interface DatabaseState {
   users: User[];
   sleepDiary: SleepDiary[];
@@ -73,4 +88,5 @@ export interface DatabaseState {
   assessments: Assessment[];
   wellnessUsage: WellnessUsage[];
   journals: Journal[];
+  vitalSigns: VitalSign[];
 }
