@@ -625,15 +625,7 @@ export default function App() {
         </section>
       </main>
 
-      {/* Mini warning footer bar info */}
-      <footer className="max-w-7xl mx-auto px-6 mt-12 text-center text-[10px] text-sleep-blue-600 font-light flex justify-between items-center w-full border-t border-sleep-blue-105 pt-4">
-        <div>
-          <span>© Cozmos Precision Digital Sleep Network Co., Ltd. 2026</span>
-        </div>
-        <div>
-          <span>ระบบรายงานดึงข้อมูลความเข้มแข็งรายบุคคล เชื่อมโยงตรง Google Looker Studio API</span>
-        </div>
-      </footer>
+      
     </div>
   );
 }
