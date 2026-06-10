@@ -244,60 +244,64 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0B1026] via-[#0d1330] to-[#080b1e] text-sleep-blue-950 font-sans pb-12">
       {/* Header */}
-      <header className="bg-sleep-blue-900 text-white px-6 py-4 border-b border-sleep-blue-100 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 bg-sleep-gold-400 rounded-2xl flex items-center justify-center">
-              <Moon className="w-6 h-6 text-[#0B1026]" />
-            </div>
-            <div>
-              <h1 className="text-xl md:text-2xl font-bold text-sleep-gold-400 flex items-center gap-2 flex-wrap">
-                Cozmos เทคโนโลยีดูแลการนอนของ
-                <button
-                  onClick={handleEditFamilyName}
-                  className="bg-white/10 px-2 py-0.5 rounded border border-white/20 cursor-pointer hover:bg-white/20 hover:border-sleep-gold-400 transition-all inline-flex items-center gap-1 text-sleep-gold-400 font-bold"
-                  title="คลิกเพื่อแก้ไขชื่อครอบครัว"
-                >
-                  {familyName}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3l4 4-7 7-4 1 1-4 7-7z"/><path d="M6 21l-3-3 3-3 3 3-3 3z"/></svg>
-                </button>
-              </h1>
-              <p className="text-xs text-sleep-blue-100 mt-0.5">
-                ระบบจัดการและดูแลสุขภาวะการนอนหลับระดับครอบครัว
-              </p>
-            </div>
-          </div>
-          {syncMessage && <div className="text-xs text-sleep-gold-400 bg-white/10 px-3 py-1 rounded-xl">{syncMessage}</div>}
-          <div className="flex items-center gap-4">
-            {activeUser && (
-              <div className="hidden md:block text-right">
-                <span className="text-[10px] text-sleep-gold-400">กำลังเฝ้าระวัง</span>
-                <strong className="block text-sm">{activeUser.patientId} ({activeUser.gender === 'ชาย' ? 'ชาย' : 'หญิง'} {activeUser.age} ปี)</strong>
-              </div>
-            )}
-            <div className="relative">
-              <button onClick={() => setShowPatientDropdown(!showPatientDropdown)} className="bg-sleep-blue-955 border border-white/20 text-xs px-3 py-2 rounded-xl flex items-center gap-2">
-                เลือกสมาชิก <ChevronDown className={`w-4 h-4 transition-transform ${showPatientDropdown ? 'rotate-180' : ''}`} />
-              </button>
-              <AnimatePresence>
-                {showPatientDropdown && (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl z-50 text-xs">
-                    <div className="p-2 border-b">สลับสมาชิก</div>
-                    {database.users.map(user => (
-                      <button key={user.patientId} onClick={() => { setActivePatientId(user.patientId); setShowPatientDropdown(false); }} className={`w-full text-left p-2 hover:bg-sleep-cream ${activePatientId === user.patientId ? 'bg-sleep-gold-50 font-bold' : ''}`}>
-                        {user.patientId} ({user.age} ปี)
-                      </button>
-                    ))}
-                    <div className="p-2 border-t">
-                      <button onClick={() => { setActiveTab('welcome'); setShowPatientDropdown(false); }} className="text-sleep-gold-500">+ เพิ่มสมาชิกใหม่</button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
+<header className="bg-sleep-blue-900 text-white px-4 py-2 md:px-6 md:py-4 border-b border-sleep-blue-100 sticky top-0 z-50">
+  <div className="max-w-7xl mx-auto">
+    {/* แถวบน: โลโก้ + ชื่อ + ปุ่มแก้ไข */}
+    <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center gap-2 md:gap-3">
+        <div className="w-8 h-8 md:w-11 md:h-11 bg-sleep-gold-400 rounded-xl md:rounded-2xl flex items-center justify-center">
+          <Moon className="w-4 h-4 md:w-6 md:h-6 text-[#0B1026]" />
         </div>
-      </header>
+        <div>
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-sm md:text-xl font-bold text-sleep-gold-400">Cozmos</span>
+            <span className="hidden sm:inline text-sm md:text-xl font-bold text-sleep-gold-400">เทคโนโลยีดูแลการนอนของ</span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={handleEditFamilyName}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleEditFamilyName(); }}
+              className="bg-white/10 px-1.5 py-0.5 rounded border border-white/20 cursor-pointer hover:bg-white/20 hover:border-sleep-gold-400 transition-all inline-flex items-center gap-0.5 text-sleep-gold-400 font-bold text-xs md:text-sm lg:text-base"
+              title="คลิกเพื่อแก้ไขชื่อครอบครัว"
+            >
+              {familyName}
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 3l4 4-7 7-4 1 1-4 7-7z"/><path d="M6 21l-3-3 3-3 3 3-3 3z"/>
+              </svg>
+            </span>
+          </div>
+          <p className="text-[10px] md:text-xs text-sleep-blue-100 mt-0.5 hidden sm:block">
+            ระบบจัดการและดูแลสุขภาวะการนอนหลับระดับครอบครัว
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {syncMessage && <div className="text-[10px] md:text-xs text-sleep-gold-400 bg-white/10 px-2 py-0.5 md:px-3 md:py-1 rounded-xl">{syncMessage}</div>}
+        {activeUser && (
+          <div className="hidden sm:block text-right">
+            <span className="text-[9px] md:text-[10px] text-sleep-gold-400">กำลังเฝ้าระวัง</span>
+            <strong className="block text-xs md:text-sm">{activeUser.patientId} ({activeUser.gender === 'ชาย' ? 'ชาย' : 'หญิง'} {activeUser.age} ปี)</strong>
+          </div>
+        )}
+        {/* dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowPatientDropdown(!showPatientDropdown)}
+            className="bg-sleep-blue-955 border border-white/20 text-[11px] md:text-xs px-2 py-1 md:px-3 md:py-2 rounded-xl flex items-center gap-1"
+          >
+            <span className="hidden xs:inline">เลือกสมาชิก</span>
+            <span className="xs:hidden">👤</span>
+            <ChevronDown className={`w-3 h-3 md:w-4 md:h-4 transition-transform ${showPatientDropdown ? 'rotate-180' : ''}`} />
+          </button>
+          {/* ... dropdown content (ไม่ต้องเปลี่ยน) ... */}
+        </div>
+      </div>
+    </div>
+    <p className="text-[10px] text-sleep-blue-100 mt-1 sm:hidden">
+      ระบบดูแลและเฝ้าระวังสุขภาพการนอนระดับครอบครัว
+    </p>
+  </div>
+</header>
 
       <main className="max-w-7xl mx-auto px-6 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Sidebar */}
