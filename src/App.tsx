@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { DatabaseState, User, SleepDiary, DailyFactors, Assessment, WellnessUsage, Journal } from './types';
+import { DatabaseState, User, SleepDiary, DailyFactors, Assessment, WellnessUsage, Journal, VitalSign } from './types';
 import Introduction from './components/Introduction';
 import SleepScreening from './components/SleepScreening';
 import DailyTracking from './components/DailyTracking';
@@ -12,6 +12,7 @@ import WellnessIntervention from './components/WellnessIntervention';
 import AIReflection from './components/AIReflection';
 import LookerDashboard from './components/LookerDashboard';
 import SheetsDatabase from './components/SheetsDatabase';
+import VitalSignsTracker from './components/VitalSignsTracker';
 import { LayoutGrid, Users, Heart, Sparkles, Database, Moon, Activity, Check, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,10 +24,11 @@ export default function App() {
     dailyFactors: [],
     assessments: [],
     wellnessUsage: [],
-    journals: []
+    journals: [],
+    vitalSigns: []        // <-- เพิ่ม vitalSigns
   });
 
-  const [activeTab, setActiveTab] = useState<'welcome' | 'screening' | 'tracking' | 'wellness' | 'reflection' | 'looker' | 'database'>('welcome');
+  const [activeTab, setActiveTab] = useState<'welcome' | 'screening' | 'tracking' | 'wellness' | 'reflection' | 'looker' | 'database' | 'vitals'>('welcome');
   const [activePatientId, setActivePatientId] = useState<string>('CZ-1001');
   const [loading, setLoading] = useState(true);
   const [syncMessage, setSyncMessage] = useState('');
@@ -37,33 +39,15 @@ export default function App() {
     return localStorage.getItem('cozmos_family_name') || 'ครอบครัวสุขสันต์';
   });
 
-  const [isEditingFamilyName, setIsEditingFamilyName] = useState(false);
-  const [tempFamilyName, setTempFamilyName] = useState(familyName);
-
-  const handleStartEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setTempFamilyName(familyName);
-    setIsEditingFamilyName(true);
-  };
-
-  const handleSaveFamilyName = () => {
-    const trimmed = tempFamilyName.trim();
-    if (trimmed) {
-      setFamilyName(trimmed);
-      localStorage.setItem('cozmos_family_name', trimmed);
-    }
-    setIsEditingFamilyName(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleSaveFamilyName();
-    } else if (e.key === 'Escape') {
-      setIsEditingFamilyName(false);
+  const handleEditFamilyName = () => {
+    const newName = window.prompt('กรุณาใส่ชื่อครอบครัวของคุณ', familyName);
+    if (newName && newName.trim() && newName.trim() !== familyName) {
+      setFamilyName(newName.trim());
+      localStorage.setItem('cozmos_family_name', newName.trim());
     }
   };
 
-  // ---------- Data loading (เหมือนเดิม) ----------
+  // ---------- Data loading ----------
   const loadDatabaseStore = async () => {
     try {
       setLoading(true);
@@ -72,6 +56,8 @@ export default function App() {
         try {
           const localData = JSON.parse(localDataStr) as DatabaseState;
           if (localData && Array.isArray(localData.users) && localData.users.length > 0) {
+            // ตรวจสอบว่า localData มี vitalSigns หรือไม่ (ถ้าไม่มีให้เพิ่ม array ว่าง)
+            if (!localData.vitalSigns) localData.vitalSigns = [];
             setDatabase(localData);
             await fetch('/api/store/sync-full', {
               method: 'POST',
@@ -89,6 +75,7 @@ export default function App() {
       const resp = await fetch('/api/store');
       const serverData = await resp.json();
       if (serverData && serverData.users) {
+        if (!serverData.vitalSigns) serverData.vitalSigns = [];
         setDatabase(serverData);
         localStorage.setItem('cozmos_db_v1', JSON.stringify(serverData));
         if (serverData.users.length > 0 && !serverData.users.some((u: any) => u.patientId === activePatientId)) {
@@ -101,6 +88,7 @@ export default function App() {
       if (fallback) {
         try {
           const localData = JSON.parse(fallback);
+          if (!localData.vitalSigns) localData.vitalSigns = [];
           setDatabase(localData);
           if (localData.users.length > 0) setActivePatientId(localData.users[0].patientId);
         } catch(e) {}
@@ -120,8 +108,15 @@ export default function App() {
     }
   }, [database]);
 
-  // ---------- API calls (เหมือนเดิม) ----------
-  const saveStateToServer = async (payload: { diary?: SleepDiary; factors?: DailyFactors; assessment?: Assessment; wellness?: WellnessUsage; journal?: Journal }) => {
+  // ---------- API calls ----------
+  const saveStateToServer = async (payload: { 
+    diary?: SleepDiary; 
+    factors?: DailyFactors; 
+    assessment?: Assessment; 
+    wellness?: WellnessUsage; 
+    journal?: Journal;
+    vital?: VitalSign;
+  }) => {
     try {
       setSyncMessage('🔄 กำลังบันทึก...');
       const resp = await fetch('/api/store/log-daily', {
@@ -164,6 +159,11 @@ export default function App() {
           if (idx !== -1) next.journals[idx] = payload.journal;
           else next.journals.push(payload.journal);
         }
+        if (payload.vital) {
+          const idx = next.vitalSigns.findIndex(v => v.patientId === payload.vital!.patientId && v.date === payload.vital!.date);
+          if (idx !== -1) next.vitalSigns[idx] = payload.vital;
+          else next.vitalSigns.push(payload.vital);
+        }
         return next;
       });
       setSyncMessage('✅ บันทึกเข้าครัวเรือนแล้ว!');
@@ -205,6 +205,7 @@ export default function App() {
       assessments: prev.assessments.filter(a => a.patientId !== patientId),
       wellnessUsage: prev.wellnessUsage.filter(w => w.patientId !== patientId),
       journals: prev.journals.filter(j => j.patientId !== patientId),
+      vitalSigns: prev.vitalSigns.filter(v => v.patientId !== patientId)
     }));
     setActivePatientId(nextId);
     try {
@@ -225,6 +226,7 @@ export default function App() {
   };
   const handleLogWellnessUsage = (wellness: WellnessUsage) => saveStateToServer({ wellness });
   const handleSaveJournalRecord = (journal: Journal) => saveStateToServer({ journal });
+  const handleSaveVitalSign = (vital: VitalSign) => saveStateToServer({ vital });
 
   const activeUser = database.users.find(u => u.patientId === activePatientId) || database.users[0];
   const userAssessmentsList = database.assessments.filter(a => a.patientId === activePatientId);
@@ -251,35 +253,14 @@ export default function App() {
             <div>
               <h1 className="text-xl md:text-2xl font-bold text-sleep-gold-400 flex items-center gap-2 flex-wrap">
                 Cozmos เทคโนโลยีดูแลการนอนของ
-                {isEditingFamilyName ? (
-                  <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="text"
-                      value={tempFamilyName}
-                      onChange={(e) => setTempFamilyName(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      onBlur={handleSaveFamilyName}
-                      autoFocus
-                      className="bg-slate-900/90 text-white font-semibold px-2 py-0.5 rounded border border-sleep-gold-400 text-sm md:text-md focus:outline-none focus:ring-0 max-w-[150px] md:max-w-[200px]"
-                    />
-                    <button
-                      onMouseDown={(e) => { e.preventDefault(); handleSaveFamilyName(); }}
-                      className="bg-sleep-gold-400 text-[#0B1026] p-1 rounded hover:bg-sleep-gold-300 transition-all cursor-pointer inline-flex items-center justify-center"
-                      title="บันทึก"
-                    >
-                      <Check className="w-3 h-3" />
-                    </button>
-                  </span>
-                ) : (
-                  <span
-                    onClick={handleStartEdit}
-                    className="bg-white/10 px-2 py-0.5 rounded border border-white/20 cursor-pointer hover:bg-white/20 hover:border-sleep-gold-400 transition-all inline-flex items-center gap-1.5 text-base md:text-lg"
-                    title="คลิกเพื่อแก้ไขชื่อครอบครัว"
-                  >
-                    {familyName}
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-pencil opacity-80"><path d="M17 3l4 4-7 7-4 1 1-4 7-7z"/><path d="M6 21l-3-3 3-3 3 3-3 3z"/></svg>
-                  </span>
-                )}
+                <button
+                  onClick={handleEditFamilyName}
+                  className="bg-white/10 px-2 py-0.5 rounded border border-white/20 cursor-pointer hover:bg-white/20 hover:border-sleep-gold-400 transition-all inline-flex items-center gap-1 text-sleep-gold-400 font-bold"
+                  title="คลิกเพื่อแก้ไขชื่อครอบครัว"
+                >
+                  {familyName}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3l4 4-7 7-4 1 1-4 7-7z"/><path d="M6 21l-3-3 3-3 3 3-3 3z"/></svg>
+                </button>
               </h1>
               <p className="text-xs text-sleep-blue-100 mt-0.5">
                 ระบบจัดการและดูแลสุขภาวะการนอนหลับระดับครอบครัว
@@ -319,7 +300,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 mt-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Sidebar (เหมือนเดิม) */}
+        {/* Sidebar */}
         <aside className="lg:col-span-3 space-y-4">
           {activeUser && (
             <div className="bg-sleep-blue-900 text-white rounded-3xl p-5">
@@ -349,6 +330,7 @@ export default function App() {
               { id: 'tracking', label: 'บันทึกพฤติกรรมประจำวัน', icon: Moon, iconColor: 'text-indigo-700' },
               { id: 'wellness', label: 'กิจกรรมช่วยผ่อนคลาย', icon: Sparkles, iconColor: 'text-amber-500' },
               { id: 'reflection', label: 'จดบันทึกและวิเคราะห์จิตใจ', icon: Activity, iconColor: 'text-blue-600' },
+              { id: 'vitals', label: '🩺 สุขภาพกาย (Vital Signs)', icon: Activity, iconColor: 'text-teal-500' },
               { id: 'looker', label: 'แดชบอร์ดสุขภาพครอบครัว', icon: LayoutGrid, iconColor: 'text-emerald-500' },
               { id: 'database', label: 'คลังระเบียนบันทึก', icon: Database }
             ].map(tab => (
@@ -370,7 +352,7 @@ export default function App() {
                   onSelectPatient={(id) => { setActivePatientId(id); setActiveTab('screening'); }}
                   onAddUser={handleCreatePatient}
                   onDeleteUser={handleDeletePatient}
-                  familyName={familyName}   // ส่งชื่อไปแสดง (ไม่มีปุ่มแก้ไข)
+                  familyName={familyName}
                 />
               )}
               {activeTab === 'screening' && (
@@ -395,6 +377,13 @@ export default function App() {
                   onSaveJournalRecord={handleSaveJournalRecord}
                   journalsList={database.journals}
                   currentDailyFactors={database.dailyFactors.find(f => f.patientId === activePatientId && f.date === new Date().toISOString().split('T')[0])}
+                />
+              )}
+              {activeTab === 'vitals' && (
+                <VitalSignsTracker
+                  patientId={activePatientId}
+                  existingVitals={database.vitalSigns}
+                  onSave={handleSaveVitalSign}
                 />
               )}
               {activeTab === 'looker' && (
