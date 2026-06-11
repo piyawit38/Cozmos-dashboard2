@@ -543,7 +543,7 @@ export default function LookerDashboard({ database, activePatientId }: LookerDas
         <div>
           <h2 className="text-2xl md:text-3xl font-semibold text-sleep-blue-900 flex items-center gap-2">
             <LayoutGrid className="w-6 h-6 text-sleep-gold-500" />
-            แดชบอร์ดวิเคราะห์สุขภาพครอบครัวเชิงลึก
+           วิเคราะห์สุขภาพครอบครัวเชิงลึก
           </h2>
         </div>
 
