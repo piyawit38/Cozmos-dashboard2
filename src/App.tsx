@@ -172,22 +172,50 @@ export default function App() {
   };
 
   // User management
+  const handleUpdateDatabase = async (updatedDb: DatabaseState) => {
+    setDatabase(updatedDb);
+    localStorage.setItem('cozmos_db_v1', JSON.stringify(updatedDb));
+    try {
+      await fetch('/api/store/sync-full', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedDb)
+      });
+    } catch (err) { console.error("Sync error:", err); }
+  };
+
   const handleCreatePatient = async (newUser: User) => {
-    setDatabase(prev => ({ ...prev, users: [...prev.users, newUser] }));
+    const nextDatabase = {
+      ...database,
+      users: [...database.users, newUser]
+    };
+    setDatabase(nextDatabase);
+    localStorage.setItem('cozmos_db_v1', JSON.stringify(nextDatabase));
     setActivePatientId(newUser.patientId);
     setActiveTab('screening');
     try {
-      await fetch('/api/store/user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newUser) });
-      await loadDatabaseStore();
-    } catch (err) { console.error(err); }
+      await fetch('/api/store/user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+    } catch (err) { console.error("Create user error:", err); }
   };
 
   const handleUpdatePatient = async (updatedUser: User) => {
-    setDatabase(prev => ({ ...prev, users: prev.users.map(u => u.patientId === updatedUser.patientId ? updatedUser : u) }));
+    const nextDatabase = {
+      ...database,
+      users: database.users.map(u => u.patientId === updatedUser.patientId ? updatedUser : u)
+    };
+    setDatabase(nextDatabase);
+    localStorage.setItem('cozmos_db_v1', JSON.stringify(nextDatabase));
     try {
-      await fetch('/api/store/user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updatedUser) });
-      await loadDatabaseStore();
-    } catch (err) { console.error(err); }
+      await fetch('/api/store/user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedUser)
+      });
+    } catch (err) { console.error("Update user error:", err); }
   };
 
   const handleDeletePatient = async (patientId: string) => {
@@ -197,21 +225,22 @@ export default function App() {
       return;
     }
     let nextId = activePatientId === patientId ? database.users.find(u => u.patientId !== patientId)?.patientId || database.users[0].patientId : activePatientId;
-    setDatabase(prev => ({
-      ...prev,
-      users: prev.users.filter(u => u.patientId !== patientId),
-      sleepDiary: prev.sleepDiary.filter(d => d.patientId !== patientId),
-      dailyFactors: prev.dailyFactors.filter(f => f.patientId !== patientId),
-      assessments: prev.assessments.filter(a => a.patientId !== patientId),
-      wellnessUsage: prev.wellnessUsage.filter(w => w.patientId !== patientId),
-      journals: prev.journals.filter(j => j.patientId !== patientId),
-      vitalSigns: prev.vitalSigns.filter(v => v.patientId !== patientId)
-    }));
+    const nextDatabase = {
+      ...database,
+      users: database.users.filter(u => u.patientId !== patientId),
+      sleepDiary: database.sleepDiary.filter(d => d.patientId !== patientId),
+      dailyFactors: database.dailyFactors.filter(f => f.patientId !== patientId),
+      assessments: database.assessments.filter(a => a.patientId !== patientId),
+      wellnessUsage: database.wellnessUsage.filter(w => w.patientId !== patientId),
+      journals: database.journals.filter(j => j.patientId !== patientId),
+      vitalSigns: database.vitalSigns ? database.vitalSigns.filter(v => v.patientId !== patientId) : []
+    };
+    setDatabase(nextDatabase);
+    localStorage.setItem('cozmos_db_v1', JSON.stringify(nextDatabase));
     setActivePatientId(nextId);
     try {
       await fetch(`/api/store/user/${patientId}`, { method: 'DELETE' });
-      await loadDatabaseStore();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error("Delete user error:", err); }
     setSyncMessage('✅ ลบสมาชิกแล้ว');
     setTimeout(() => setSyncMessage(''), 3000);
   };
@@ -394,7 +423,7 @@ export default function App() {
                 <LookerDashboard database={database} activePatientId={activePatientId} />
               )}
               {activeTab === 'database' && (
-                <SheetsDatabase database={database} onUpdateDatabase={setDatabase} />
+                <SheetsDatabase database={database} onUpdateDatabase={handleUpdateDatabase} />
               )}
             </motion.div>
           </AnimatePresence>
