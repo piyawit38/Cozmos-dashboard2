@@ -13,6 +13,7 @@ import {
 import { 
   LayoutGrid, Heart, Sparkles, AlertCircle, RefreshCw, Compass, Volume2, VolumeX 
 } from 'lucide-react';
+import { motion } from 'motion/react';
 
 interface LookerDashboardProps {
   database: DatabaseState;
@@ -20,257 +21,170 @@ interface LookerDashboardProps {
   onUpdateDatabase?: (updatedDb: DatabaseState) => void;
 }
 
-// Helper
+// Helper: get patient display name
 const getPatientName = (users: User[], patientId: string): string => {
   const user = users.find(u => u.patientId === patientId);
   if (!user) return patientId;
+  // Optional: custom nicknames
   if (user.patientId === 'CZ-1001') return 'คุณวินัย';
   if (user.patientId === 'CZ-1002') return 'คุณป้ามะลิ';
   if (user.patientId === 'CZ-1003') return 'คุณสมชาย';
   return user.fullName || user.patientId;
 };
 
+// Type for API response
 interface GeminiReportResponse {
   report?: string;
   error?: string;
 }
 
-// ---- Component แยกสำหรับ Wave Animation (ไม่ต้อง Re-render) ----
-const WaveAnimation = React.memo(() => {
-  const heights = [1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2];
-  return (
-    <div className="flex items-center gap-1 justify-end">
-      {heights.map((h, i) => (
-        <div
-          key={`wave-${i}`}
-          className="w-0.5 bg-sleep-gold-500 rounded-full animate-bounce"
-          style={{
-            height: `${h * 3}px`,
-            animationDelay: `${i * 0.1}s`,
-            animationDuration: '0.8s'
-          }}
-        />
-      ))}
-    </div>
-  );
-});
-WaveAnimation.displayName = 'WaveAnimation';
+export default function LookerDashboard({ database, activePatientId, onUpdateDatabase }: LookerDashboardProps) {
+  const [activePage, setActivePage] = useState<number>(1);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [aiReport, setAiReport] = useState<string>('');
+  const [reportError, setReportError] = useState('');
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-// ---- Component สำหรับ Page 1 (ใช้ React.memo) ----
-interface Page1Props {
-  database: DatabaseState;
-  activePatientId: string;
-  totalUsers: number;
-  avgIsi: number;
-  avgEss: number;
-  avgEfficiency: number;
-  avgStress: number;
-  patientAssessments: Assessment[];
-  patientDiaries: SleepDiary[];
-  onUpdateDatabase?: (updatedDb: DatabaseState) => void;
-}
-
-const Page1Content = React.memo(({ 
-  database, activePatientId, totalUsers, avgIsi, avgEss, avgEfficiency, avgStress,
-  patientAssessments, patientDiaries, onUpdateDatabase
-}: Page1Props) => {
-  const [isSpeakingUI, setIsSpeakingUI] = useState(false);
-  const isSpeakingRef = useRef(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const activeUtterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
-  const [voicesLoaded, setVoicesLoaded] = useState(false);
-  const isMounted = useRef(true);
 
-  // Load Speech Synthesis
+  // Initialize Speech Synthesis
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.speechSynthesis) return;
-    synthRef.current = window.speechSynthesis;
-    const checkVoices = () => {
-      if (synthRef.current?.getVoices().length) setVoicesLoaded(true);
-    };
-    synthRef.current.addEventListener('voiceschanged', checkVoices);
-    checkVoices();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      synthRef.current = window.speechSynthesis;
+    }
     return () => {
-      isMounted.current = false;
-      synthRef.current?.removeEventListener('voiceschanged', checkVoices);
-      synthRef.current?.cancel();
+      if (synthRef.current) {
+        synthRef.current.cancel();
+      }
     };
   }, []);
 
-  // หยุดพูดเมื่อเปลี่ยน activePatientId
+  // Stop speaking on page/patient transition
   useEffect(() => {
     if (synthRef.current) {
       synthRef.current.cancel();
-      isSpeakingRef.current = false;
-      if (isMounted.current) setIsSpeakingUI(false);
+      setIsSpeaking(false);
       activeUtterancesRef.current = [];
     }
-  }, [activePatientId]);
+  }, [activePage, activePatientId]);
 
-  const patientName = getPatientName(database.users, activePatientId);
-  const latestAss = patientAssessments[patientAssessments.length - 1];
-  const latestDiary = patientDiaries[patientDiaries.length - 1];
-
-  // คำนวณคำแนะนำ (useMemo)
-  const cbtiRecommendations = useMemo(() => {
-    const recs = [];
-    const eff = latestDiary ? latestDiary.sleepEfficiency : avgEfficiency;
-    const isiScore = latestAss ? latestAss.isi : avgIsi;
-    const stressVal = avgStress;
-
-    if (eff < 85) {
-      recs.push({
-        step: "ขั้นตอนที่ 1",
-        title: "การจำกัดชั่วโมงและควบคุมช่วงเวลาบนเตียง (Sleep Restriction Therapy)",
-        badge: "CBT-I ทองคำ",
-        type: "clinical",
-        icon: "⏰",
-        detail: `ประสิทธิภาพการนอนเฉลี่ยล่าสุดของคุณอยู่ที่ ${eff}% (ต่ำกว่าเกณฑ์ปกติที่ควร >85%) เพื่อส่งเสริมความรู้สึกอยากนอนหลับลึก คุณควร "บีบเวลานอนแช่บนเตียง" โดยเข้านอนเมื่อตาหรี่จนต้านไม่ไหวเท่านั้น และลุกขึ้นตรงเวลาเดิมทุกๆ เช้าอย่างเข้มแข็งเด็ดขาด วิธีนี้จะกระตุ้นคลื่นสมองหลั่งสารความง่วงตามธรรมชาติ`
-      });
-    } else {
-      recs.push({
-        step: "ขั้นตอนที่ 1",
-        title: "การปกป้องเวลานอนที่สมดุลและตื่นเป็นเวลา (Circadian Rhythm Consolidation)",
-        badge: "Sleep Hygiene",
-        type: "hygiene",
-        icon: "☀️",
-        detail: `คุณมีประสิทธิภาพการนอนเฉลี่ยในระดับที่ดีมาก (${eff}%) แนะนำให้ปกป้องเสถียรภาพนี้โดยการกำหนด "เวลาตื่นนอนที่แน่นอนแบบนาทีต่อนาที" แม้จะเป็นวันหยุดสุดสัปดาห์ก็ตาม เพื่อให้นาฬิกาชีวิตชีวภาพของคุณหมุนเวียนคงที่และหลับสนิทยิ่งขึ้นต่อๆ ไป`
-      });
+  const splitTextIntoSentences = (text: string): string[] => {
+    const parts = text.split(/[\n,。．\.。、\s]+/);
+    const chunks: string[] = [];
+    let currentChunk = "";
+    
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      
+      if (currentChunk.length + trimmed.length > 120) {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = trimmed;
+      } else {
+        currentChunk = currentChunk ? currentChunk + " " + trimmed : trimmed;
+      }
     }
-
-    if (isiScore > 14) {
-      recs.push({
-        step: "ขั้นตอนที่ 2",
-        title: "กฎการลุกออกจากเตียงใน 20 นาที (Stimulus Control Therapy)",
-        badge: "CBT-I แกนหลัก",
-        type: "clinical",
-        icon: "🚪",
-        detail: `สถิติคะแนนดัชนีการนอนหลับติดขัด (ISI) ของคุณสูงถึง ${isiScore} คะแนน แนะนำหักดิบสมองเชิงตอบสนอง: หากล้มตัวลงนอนแล้วยังคิดฟุ้งซ่านหรือตื่นมากลางดึกเกิน 20 นาที "ห้ามพยายามฝืนนอนต่อเด็ดขาด" ให้ลุกไปห้องอื่นที่สลัวๆ อ่านหนังสือเบาๆ หรือฟังเสียงระเบิดสมอง จนกว่าจะรู้สึกง่วงจัดจริงๆ ค่อยหวนกลับมาที่เตียง สมองจะได้จับคู่เตียงกับการหลับไม่ใช่ความกังวล`
-      });
-    } else {
-      recs.push({
-        step: "ขั้นตอนที่ 2",
-        title: "การปรับโครงสร้างเพื่อสลายความกดดันในการนอน (Cognitive Restructuring)",
-        badge: "Cognitive Therapy",
-        type: "hygiene",
-        icon: "🧠",
-        detail: `ระดับโรคสะสมรอบล่าสุดดีกว่าเกณฑ์ล่อแหลม ควรจำไว้เสมอว่า "การตื่นกลางดึกเป็นเรื่องธรรมชาติ" ทุกเสี้ยวคืนไม่ควรเอาการนอนหลับมาเป็นหน้าที่ที่ต้องทำให้สำเร็จ ยิ่งคุณคลายการคาดคั้นลง คลื่นประสาทสมองซีกคอร์เท็กซ์ก็จะยิ่งปรับสลัวลงอย่างรวดเร็วเป็นธรรมชาติ`
-      });
+    if (currentChunk) {
+      chunks.push(currentChunk);
     }
+    return chunks;
+  };
 
-    if (stressVal >= 6) {
-      recs.push({
-        step: "ขั้นตอนที่ 3",
-        title: "ระบายความตึงเครียดของระบบชีวประสาท (Autonomic De-arousal)",
-        badge: "Arousal Reduction",
-        type: "clinical",
-        icon: "🫁",
-        detail: `ความเครียดของร่างกายอยู่ในเกณฑ์ค่อนข้างสูง (${stressVal}/10) แนะนำบำบัดชีวประสาทช่วงสมดุลกระตุ้น ด้วยการฝึก Progressive Muscle Relaxation (เกร็งและคลายมัดกล้ามเนื้อ 16 จุด) ผสานเสียงคลื่นหรือฝึกการหายใจลึกแบบ 4-7-8 นาน 5 นาทีก่อนปิดสวิตช์ไฟเพื่อตัดคลื่นสมองไฮเปอร์`
-      });
-    } else {
-      recs.push({
-        step: "ขั้นตอนที่ 3",
-        title: "การจัดระเบียบสัญญาณก่อนนอน (Bedtime Buffer Zone)",
-        badge: "Wind-down Plan",
-        type: "hygiene",
-        icon: "☕",
-        detail: `ระดับภาวะกระตุ้นของคุณค่อนข้างสงบดี แนะนำให้จัดสภาพแวดล้อมเพื่อรักษาเสถียรภาพ เช่น งดทานอาหารมื้อหนักและคาเฟอีนล่วงหน้าอย่างน้อย 6 ชั่วโมง และทิ้งระยะห่างจากภาพหน้าจอแสงสีฟ้าอย่างน้อย 1 ชั่วโมงก่อนเข้าสู่ช่วงผ่อนคลาย`
-      });
+  const unlockAudioRef = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const ctx = new AudioContextClass();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+      }
+    } catch (e) {
+      console.warn("Unblocking audio context error:", e);
     }
-    return recs;
-  }, [latestDiary, latestAss, avgEfficiency, avgIsi, avgStress]);
+  };
 
-  const fullSpeechScript = useMemo(() => {
-    return `สวัสดีครับคุณ${patientName} ผมคือโค้ชส่วนตัวคอสมอสที่จะพาคุณมาเปลี่ยนความคิดและพฤติกรรมการนอนแบบยั่งยืนด้วยหลัก ซีบีทีไอ ครับ. จากการวิเคราะห์รอบล่าสุดเฉพาะตัวคุณ มีคำแนะแนว 3 ขั้นตอนสำคัญดังนี้ครับ. ` +
-      cbtiRecommendations.map((r) => `${r.step}: ${r.title}. รายละเอียดแนะแนวคือ ${r.detail}. `).join(" ") +
-      ` ขอให้คุณ${patientName}ค่อยๆปรับตัวทีละนิดและรักษาวินัยอย่างใจเย็นนะครับ คอสมอสขอเป็นกำลังใจให้ทุกคืนเป็นคืนที่แสนสุขครับ.`;
-  }, [patientName, cbtiRecommendations]);
+  const handleSpeakTts = (textToSpeak: string) => {
+    if (!synthRef.current) return;
 
-  // ฟังก์ชัน TTS (ใช้ useCallback และ refs)
-  const handleSpeakTts = useCallback(async () => {
-    const synth = synthRef.current;
-    if (!synth) {
-      alert('เบราว์เซอร์ไม่รองรับ Speech Synthesis');
-      return;
-    }
+    // Unblock mobile browser audio context synchronously in this click handler
+    unlockAudioRef();
 
-    // ถ้ากำลังพูดอยู่ => หยุด
-    if (isSpeakingRef.current) {
-      synth.cancel();
-      isSpeakingRef.current = false;
-      if (isMounted.current) setIsSpeakingUI(false);
+    if (isSpeaking) {
+      synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
+      setIsSpeaking(false);
       activeUtterancesRef.current = [];
       return;
     }
 
-    // รอให้ voice โหลด
-    if (!voicesLoaded) {
-      await new Promise<void>((resolve) => {
-        const check = () => {
-          if (synth.getVoices().length > 0) {
-            setVoicesLoaded(true);
-            resolve();
-          } else {
-            setTimeout(check, 200);
-          }
-        };
-        check();
-      });
+    // Safely clear any residue speech
+    synthRef.current.cancel();
+    if (synthRef.current.paused) {
+      synthRef.current.resume();
     }
+    
+    const cleanText = textToSpeak.replace(/[#*`_~]/g, '');
+    const chunks = splitTextIntoSentences(cleanText);
+    if (chunks.length === 0) return;
 
-    if (synth.getVoices().length === 0) {
-      alert('ไม่พบเสียงในระบบ');
-      return;
-    }
+    setIsSpeaking(true);
 
-    // หยุดทุกอย่างที่ค้าง
-    synth.cancel();
+    const utterances: SpeechSynthesisUtterance[] = [];
     activeUtterancesRef.current = [];
 
-    // แยกข้อความเป็นประโยค
-    const chunks = fullSpeechScript.split(/[\n,。．\.。、\s]+/).filter(s => s.trim());
-    const utterances: SpeechSynthesisUtterance[] = [];
-    const voices = synth.getVoices();
-    const thVoice = voices.find(v => v.lang.includes('th'));
-
-    for (const chunk of chunks) {
-      const u = new SpeechSynthesisUtterance(chunk.trim());
+    chunks.forEach((chunkText, index) => {
+      const u = new SpeechSynthesisUtterance(chunkText);
       u.lang = 'th-TH';
       u.rate = 1.05;
-      if (thVoice) u.voice = thVoice;
-      utterances.push(u);
-    }
 
-    if (utterances.length === 0) return;
+      const voices = synthRef.current?.getVoices() || [];
+      const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
+      if (thVoice) {
+        u.voice = thVoice;
+      }
 
-    // กำหนด onend สำหรับตัวสุดท้าย
-    utterances[utterances.length - 1].onend = () => {
-      isSpeakingRef.current = false;
-      if (isMounted.current) setIsSpeakingUI(false);
-      activeUtterancesRef.current = [];
-    };
+      if (index === chunks.length - 1) {
+        u.onend = () => {
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+        };
+      }
 
-    // กำหนด onerror สำหรับทุกตัว
-    utterances.forEach((u) => {
       u.onerror = (e) => {
-        console.warn('Speech error:', e);
-        isSpeakingRef.current = false;
-        if (isMounted.current) setIsSpeakingUI(false);
-        activeUtterancesRef.current = [];
+        console.error("Speech dashboard chunk error:", e);
+        if (e.error !== 'interrupted') {
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+        }
       };
+
+      utterances.push(u);
     });
 
     activeUtterancesRef.current = utterances;
-    isSpeakingRef.current = true;
-    if (isMounted.current) setIsSpeakingUI(true);
 
-    // พูดทีละตัว (ลำดับ)
-    utterances.forEach(u => synth.speak(u));
-  }, [voicesLoaded, fullSpeechScript]);
+    // Queue all utterances synchronously within user-trigger block to completely satisfy mobile security model
+    utterances.forEach(u => {
+      synthRef.current?.speak(u);
+    });
+  };
 
-  // โหลดข้อมูลตัวอย่าง
-  const handleLoadDemoData = useCallback(() => {
+  const handleLoadDemoData = () => {
     const targetId = activePatientId;
+    const patientName = getPatientName(database.users, targetId);
+    
     const demoDiaries: SleepDiary[] = [
       { patientId: targetId, date: "2026-06-05", bedTime: "23:45", wakeTime: "06:30", sleepDuration: 6, sleepEfficiency: 85, awakenings: 2 },
       { patientId: targetId, date: "2026-06-06", bedTime: "00:15", wakeTime: "06:00", sleepDuration: 5.2, sleepEfficiency: 79, awakenings: 3 },
@@ -279,6 +193,7 @@ const Page1Content = React.memo(({
       { patientId: targetId, date: "2026-06-09", bedTime: "01:10", wakeTime: "06:45", sleepDuration: 5.1, sleepEfficiency: 78, awakenings: 3 },
       { patientId: targetId, date: "2026-06-10", bedTime: "22:30", wakeTime: "06:30", sleepDuration: 7.5, sleepEfficiency: 94, awakenings: 1 },
     ];
+
     const demoFactors: DailyFactors[] = [
       { patientId: targetId, date: "2026-06-05", stressScore: 7, caffeine: 3, exercise: 0, screenTime: 4.5, napDuration: 0 },
       { patientId: targetId, date: "2026-06-06", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 5, napDuration: 30 },
@@ -287,10 +202,12 @@ const Page1Content = React.memo(({
       { patientId: targetId, date: "2026-06-09", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 4.8, napDuration: 40 },
       { patientId: targetId, date: "2026-06-10", stressScore: 4, caffeine: 1, exercise: 30, screenTime: 2, napDuration: 0 },
     ];
+
     const demoAssessments: Assessment[] = [
       { patientId: targetId, date: "2026-06-05", isi: 16, ess: 13, stopBang: 4, riskLevel: "ปานกลาง" },
-      { patientId: targetId, date: "2026-06-10", isi: 9, ess: 12, stopBang: 3, riskLevel: "สูง", isiAnswers: [1,1,1,2,2,2,0], essAnswers: [2,2,2,2,0,2,2,0], stopBangAnswers: [1,0,1,0,1,0,0,0] }
+      { patientId: targetId, date: "2026-06-10", isi: 9, ess: 12, stopBang: 3, riskLevel: "สูง", isiAnswers: [1, 1, 1, 2, 2, 2, 0], essAnswers: [2, 2, 2, 2, 0, 2, 2, 0], stopBangAnswers: [1, 0, 1, 0, 1, 0, 0, 0] }
     ];
+
     const demoWellness: WellnessUsage[] = [
       { patientId: targetId, date: "2026-06-05", zodiacType: "ไฟ", whiteNoise: 0, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
       { patientId: targetId, date: "2026-06-06", zodiacType: "ไฟ", whiteNoise: 15, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 1 },
@@ -299,6 +216,7 @@ const Page1Content = React.memo(({
       { patientId: targetId, date: "2026-06-09", zodiacType: "ไฟ", whiteNoise: 10, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
       { patientId: targetId, date: "2026-06-10", zodiacType: "ไฟ", whiteNoise: 1, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 0 }
     ];
+
     const demoJournals: Journal[] = [
       { patientId: targetId, date: "2026-06-05", mood: "Stress", journalText: "วันนี้เครียดเรื่องงานมาก สมองไม่ยอมหยุดคิด พยายามข่มตานอนแล้วก็ตื่นบ่อย", voiceJournal: false, aiInsight: "จากการวิเคราะห์ความเครียดสูงสัมพันธ์กับการจดจ่อความคิด แนะนำให้ระบายความคิด Brain Dump ก่อนนอน" },
       { patientId: targetId, date: "2026-06-06", mood: "Stress", journalText: "ทำงานด่วนถึงดึก ดื่มกาแฟตอนทุ่มนึง นอนไม่หลับเลย หลับได้แปปเดียวตื่นอีก", voiceJournal: true, aiInsight: "การดื่มคาเฟอีนหลังบ่ายสองส่งผลต่อระยะเวลาและการเข้าสู่ช่วงหลับลึกอย่างเห็นได้ชัด" },
@@ -315,173 +233,15 @@ const Page1Content = React.memo(({
       wellnessUsage: [...database.wellnessUsage.filter(w => w.patientId !== targetId), ...demoWellness],
       journals: [...database.journals.filter(j => j.patientId !== targetId), ...demoJournals],
     };
-    if (onUpdateDatabase) onUpdateDatabase(nextDb);
-  }, [activePatientId, database, onUpdateDatabase]);
 
-  const hasLogData = patientAssessments.length > 0 || patientDiaries.length > 0;
+    if (onUpdateDatabase) {
+      onUpdateDatabase(nextDb);
+    }
+  };
 
-  return (
-    <div className="space-y-6">
-      <div className="border-b border-sleep-blue-100 pb-3 flex flex-col md:flex-row md:items-center justify-between gap-2">
-        <div>
-          <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 1 : บทวิเคราะห์สุขภาวะและการแนะแนวเชิงพฤติกรรม (CBT-I)</h4>
-          <p className="text-xs text-sleep-blue-500 font-light">ดึงข้อมูลสถิติ ดัชนีจำลอง และวิเคราะห์คู่มือพฤเทคบำบัดส่วนบุคคล</p>
-        </div>
-        <button
-          onClick={handleSpeakTts}
-          className={`px-4 py-2 rounded-2xl text-xs font-bold transition flex items-center gap-2 shadow-sm shrink-0 uppercase tracking-wider ${
-            isSpeakingUI 
-              ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
-              : 'bg-sleep-blue-900 hover:bg-sleep-blue-800 text-white'
-          }`}
-        >
-          {isSpeakingUI ? (
-            <>
-              <VolumeX className="w-4 h-4 text-white" />
-              หยุดโค้ชเสียงบรรยาย
-            </>
-          ) : (
-            <>
-              <Volume2 className="w-4 h-4 text-sleep-gold-400" />
-              ให้ AI โค้ชส่วนตัวอ่านออกเสียงให้ฟัง 🔊
-            </>
-          )}
-        </button>
-      </div>
+  // ---------- Memoized calculations ----------
+  const totalUsers = database.users.length;
 
-      {isSpeakingUI && (
-        <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in space-y-2 sm:space-y-0">
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-sleep-gold-500 animate-ping"></span>
-              <span className="text-xs font-semibold text-sleep-blue-950 font-sans">
-                โค้ชเสียงบำบัดส่วนบุคคล Cozmos กำลังพูดคุยกับคุณ <strong className="text-sleep-blue-900">{patientName}</strong>...
-              </span>
-            </div>
-            <span className="text-[10px] text-amber-700 font-normal mt-1 block">
-              ℹ️ สำหรับผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างโทรศัพท์ (ดึงแถบปิดเสียงขึ้น) และเพิ่มระดับเสียงขึ้นด้วยนะคะ
-            </span>
-          </div>
-          <WaveAnimation />
-        </div>
-      )}
-
-      {!hasLogData && (
-        <div className="bg-gradient-to-r from-sleep-gold-500/10 to-transparent border-2 border-dashed border-sleep-gold-400/60 p-5 rounded-3xl space-y-3 shadow-sm">
-          <h5 className="font-bold text-sm text-sleep-blue-900 flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-sleep-gold-500 animate-pulse shrink-0" />
-            💡 ยังไม่มีข้อมูลระเบียนสุขภาพสำหรับคุณ {patientName}
-          </h5>
-          <p className="text-xs text-sleep-blue-700 leading-relaxed max-w-4xl">
-            เนื่องจากคุณยังไม่มีระเบียบบันทึกสุขภาพ คะแนน สถิติความง่วงนอน ดัชนีนอนไม่หลับ (ISI) และประสิทธิภาพการนอนหลับจึงคํานวณหาค่าเฉลี่ยเป็นศูนย์ (0) ทั้งหมดครับ. ระบบยินดีรองรับการคัดกรองส่วนตัวของคุณ โดยคุณสามารถทำประเมินจริง หรือ <strong className="text-sleep-blue-950 font-extrabold">กดปุ่มสีทองด้านล่างเพื่อโหลดโปรไฟล์จำลองสุขภาพทางการแพทย์อัตโนมัติ</strong> เพื่อเห็นบทวิเคราะห์และรายงานสรุปวิเคราะห์ทั้งหมดของระบบ Cozmos ทันที!
-          </p>
-          {onUpdateDatabase && (
-            <button
-              onClick={handleLoadDemoData}
-              className="bg-sleep-gold-500 hover:bg-sleep-gold-400 text-sleep-blue-950 font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-md inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              🧪 โหลดสถิติรักษาสุขภาพนอนหลับจำลองตรวจจับ สำหรับ {patientName}
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
-          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">สมาชิกครอบครัว</span>
-          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{totalUsers} คน</strong>
-          <span className="text-[9px] text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">👤 100% บันทึก</span>
-        </div>
-        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
-          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ดัชนีนอนไม่หลับเฉลี่ย</span>
-          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgIsi}</strong>
-          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full inline-block font-sans ${
-            avgIsi > 14 ? 'text-red-600 bg-red-50' : 'text-orange-600 bg-orange-50'
-          }`}>
-            {avgIsi > 14 ? '⚠️ ระดับปานกลาง' : '🟢 ระดับเฝ้าระวัง'}
-          </span>
-        </div>
-        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
-          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ความง่วงสะสม ESS</span>
-          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEss}</strong>
-          <span className="text-[9px] text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-full inline-block font-sans">⚡ ล้าง่วงสะสม</span>
-        </div>
-        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
-          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ประสิทธิภาพหลับรวม</span>
-          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEfficiency}%</strong>
-          <span className="text-[9px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">🟢 รักษาเสถียรภาพ</span>
-        </div>
-        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
-          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ระดับเครียดร่างกาย</span>
-          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgStress}/10</strong>
-          <span className="text-[9px] text-red-500 bg-red-50 px-2 py-0.5 rounded-full inline-block font-sans">🔴 ผ่อนคลายกล้ามเนื้อ</span>
-        </div>
-      </div>
-
-      <div className="bg-gradient-to-br from-[#0B1026] to-[#0f173d] text-white p-6 rounded-3xl border border-sleep-gold-400/20 shadow-xl space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-2">
-          <div className="space-y-1">
-            <h5 className="font-semibold text-base text-sleep-gold-400 flex items-center gap-1.5">
-              <Sparkles className="w-5 h-5 text-sleep-gold-400" />
-              Cozmos Personal CBT-I Sleep Coach
-            </h5>
-            <p className="text-xs text-white/50 font-light">เส้นทางปรับวิธีคิดควบคู่ไปกับตารางสรีรวิทยา เพื่อการหายขาดจากโรคระยะยาว</p>
-          </div>
-          <span className="text-[10px] bg-sleep-gold-500/20 text-sleep-gold-400 border border-sleep-gold-500/30 px-3 py-1 rounded-full font-mono uppercase font-bold self-start sm:self-center">
-            Personalized for {patientName}
-          </span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {cbtiRecommendations.map((rec) => (
-            <div key={`${rec.step}-${rec.title}`} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3 hover:bg-white/10 transition-all relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-sleep-gold-400/5 rounded-full blur-xl group-hover:bg-sleep-gold-400/10 transition"></div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-sleep-gold-300 font-bold bg-sleep-gold-500/10 border border-sleep-gold-400/20 px-2.5 py-1 rounded-lg">
-                  {rec.step} • {rec.badge}
-                </span>
-                <span className="text-2xl">{rec.icon}</span>
-              </div>
-              <h6 className="font-bold text-sm text-white tracking-wide leading-snug">{rec.title}</h6>
-              <p className="text-[11px] text-white/80 leading-relaxed font-light">{rec.detail}</p>
-              <div className="pt-2 border-t border-white/5 flex justify-between items-center text-[9px] text-white/40">
-                <span>CBT-I Pathway ✔️</span>
-                <span>ความน่าเชื่อถือทางคลินิกสูง</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h5 className="font-semibold text-sm text-sleep-blue-950 flex items-center gap-1">
-            <Heart className="w-4 h-4 text-red-500 animate-pulse" />
-            สรุปข้อคิดเห็นภาพรวมประจำบ้าน
-          </h5>
-          <p className="text-xs text-sleep-blue-600 font-light leading-relaxed max-w-2xl">
-            แปลผลภาพรวมจากพฤทีกรรมคนในบ้าน: ดัชนีเฉลี่ยชี้ว่าสมาชิกส่วนใหญ่มีสุขอนามัยการนอนหลับค่อนข้างดีแต่อาจมีความเหนื่อยล้าสะสมบางสัปดาห์ การรักษาวินัยการจัดเตียง อุณหภูมิห้องนอน และใช้วิธี Zodiac Sleep Sync จะช่วยส่งเสริมให้นอนหลับได้สนิทยิ่งขึ้นครับ
-          </p>
-        </div>
-        <div className="text-right flex flex-col justify-center shrink-0">
-          <span className="text-[10px] text-sleep-blue-400 font-mono">DATABASE ENGINE</span>
-          <strong className="text-xs font-semibold text-sleep-blue-900 uppercase">Google Sheets Live Sync</strong>
-        </div>
-      </div>
-    </div>
-  );
-});
-Page1Content.displayName = 'Page1Content';
-
-// ---- Main Component ----
-export default function LookerDashboard({ database, activePatientId, onUpdateDatabase }: LookerDashboardProps) {
-  const [activePage, setActivePage] = useState<number>(1);
-  const [loadingReport, setLoadingReport] = useState(false);
-  const [aiReport, setAiReport] = useState<string>('');
-  const [reportError, setReportError] = useState('');
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Memoized data
-  const totalUsers = useMemo(() => database.users.length, [database.users]);
   const avgIsi = useMemo(() => {
     if (!database.assessments.length) return 0;
     const sum = database.assessments.reduce((s, a) => s + a.isi, 0);
@@ -506,6 +266,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     return Number((sum / database.dailyFactors.length).toFixed(1));
   }, [database.dailyFactors]);
 
+  // Page 2 data: sleep analytics for selected patient
   const patientDiaries = useMemo(() => {
     return database.sleepDiary
       .filter(d => d.patientId === activePatientId)
@@ -531,6 +292,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     });
   }, [patientDiaries, patientAssessments]);
 
+  // Page 3: ISI distribution
   const isiDistData = useMemo(() => {
     let normal = 0, mild = 0, moderate = 0, severe = 0;
     database.assessments.forEach(a => {
@@ -544,14 +306,16 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       { name: 'เล็กน้อย (8-14)', count: mild, fill: '#facc15' },
       { name: 'ปานกลาง (15-21)', count: moderate, fill: '#fb923c' },
       { name: 'รุนแรง (22-28)', count: severe, fill: '#f87171' }
-    ].filter(d => d.count > 0);
+    ].filter(d => d.count > 0); // hide zero categories
   }, [database.assessments]);
 
+  // Page 4: correlation data – only include complete pairs
   const correlationData = useMemo(() => {
     const result: any[] = [];
     database.sleepDiary.forEach(diary => {
       const factor = database.dailyFactors.find(f => f.patientId === diary.patientId && f.date === diary.date);
       const assessment = database.assessments.find(a => a.patientId === diary.patientId);
+      // Only include if we have both factor and assessment for better accuracy
       if (factor && assessment) {
         result.push({
           stress: factor.stressScore,
@@ -567,6 +331,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     return result;
   }, [database.sleepDiary, database.dailyFactors, database.assessments]);
 
+  // Page 5: wellness usage stats
   const wellnessStatsData = useMemo(() => {
     let whiteSum = 0, rainSum = 0, oceanSum = 0, forestSum = 0, breathingSum = 0, dumpSum = 0;
     database.wellnessUsage.forEach(w => {
@@ -587,6 +352,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     ].filter(d => d.value > 0);
   }, [database.wellnessUsage]);
 
+  // Page 6: mood distribution
   const moodData = useMemo(() => {
     let pos = 0, neu = 0, sad = 0, str = 0;
     database.journals.forEach(j => {
@@ -603,10 +369,15 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     ].filter(d => d.value > 0);
   }, [database.journals]);
 
+  // ---------- API call with abort and fallback ----------
   const fetchWeeklyReport = useCallback(async () => {
-    if (abortControllerRef.current) abortControllerRef.current.abort();
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
     const controller = new AbortController();
     abortControllerRef.current = controller;
+
     setLoadingReport(true);
     setAiReport('');
     setReportError('');
@@ -618,52 +389,314 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         body: JSON.stringify({ patientId: activePatientId }),
         signal: controller.signal
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data: GeminiReportResponse = await response.json();
       if (data.error) throw new Error(data.error);
+      
       setAiReport(data.report || 'ไม่พบสรุปรายงานสำหรับสมาชิกครอบครัวนี้');
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
+      if (err.name === 'AbortError') {
+        console.log('Fetch aborted');
+        return;
+      }
       console.error(err);
-      setReportError('ไม่สามารถเชื่อมต่อกับระบบ AI ได้ในขณะนี้ กรุณาลองอีกครั้งภายหลัง หรือตรวจสอบว่า backend server ทำงานอยู่');
+      // Friendly fallback message
+      setReportError(
+        'ไม่สามารถเชื่อมต่อกับระบบ AI ได้ในขณะนี้ กรุณาลองอีกครั้งภายหลัง หรือตรวจสอบว่า backend server ทำงานอยู่'
+      );
+      // Optional: fallback mock report for demo (remove in production)
       if (process.env.NODE_ENV === 'development') {
         setAiReport('[โหมดพัฒนา] รายงานตัวอย่าง: สมาชิกในครอบครัวมีแนวโน้มความเครียดลดลง 10% เมื่อเทียบกับสัปดาห์ที่ผ่านมา แนะนำฝึกหายใจก่อนนอนอย่างน้อย 5 นาที');
       }
     } finally {
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setLoadingReport(false);
     }
   }, [activePatientId]);
 
+  // Trigger report fetch when page 6 is active or patient changes
   useEffect(() => {
-    if (activePage === 6) fetchWeeklyReport();
+    if (activePage === 6) {
+      fetchWeeklyReport();
+    }
     return () => {
-      if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     };
   }, [activePage, activePatientId, fetchWeeklyReport]);
 
-  // Render functions
-  const renderPage1 = useCallback(() => (
-    <Page1Content
-      database={database}
-      activePatientId={activePatientId}
-      totalUsers={totalUsers}
-      avgIsi={avgIsi}
-      avgEss={avgEss}
-      avgEfficiency={avgEfficiency}
-      avgStress={avgStress}
-      patientAssessments={patientAssessments}
-      patientDiaries={patientDiaries}
-      onUpdateDatabase={onUpdateDatabase}
-    />
-  ), [database, activePatientId, totalUsers, avgIsi, avgEss, avgEfficiency, avgStress, patientAssessments, patientDiaries, onUpdateDatabase]);
+  // ---------- Render helper for each page (keeps JSX clean) ----------
+  const renderPage1 = () => {
+    // ดึงค่าของคนไข้คนปัจจุบันเพื่อทำคำแนะนำเฉพาะบุคคล (Tailored recommendations)
+    const latestAss = patientAssessments[patientAssessments.length - 1];
+    const latestDiary = patientDiaries[patientDiaries.length - 1];
+    const patientName = getPatientName(database.users, activePatientId);
 
-  const renderPage2 = useCallback(() => (
+    // คำนวณคำแนะนำตามหลักการแพทย์อิงหลักฐาน (Evidence-based sleep guidelines & CBT-I)
+    const cbtiRecommendations = [];
+    
+    // 1. ประสิทธิภาพการนอนต่ำกว่า 85% -> หลักการจำกัดชั่วโมงบนเตียง (Sleep Restriction Therapy)
+    const eff = latestDiary ? latestDiary.sleepEfficiency : avgEfficiency;
+    if (eff < 85) {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 1",
+        title: "การจำกัดชั่วโมงและควบคุมช่วงเวลาบนเตียง (Sleep Restriction Therapy)",
+        badge: "CBT-I ทองคำ",
+        type: "clinical",
+        icon: "⏰",
+        detail: `ประสิทธิภาพการนอนเฉลี่ยล่าสุดของคุณอยู่ที่ ${eff}% (ต่ำกว่าเกณฑ์ปกติที่ควร >85%) เพื่อส่งเสริมความรู้สึกอยากนอนหลับลึก คุณควร "บีบเวลานอนแช่บนเตียง" โดยเข้านอนเมื่อตาหรี่จนต้านไม่ไหวเท่านั้น และลุกขึ้นตรงเวลาเดิมทุกๆ เช้าอย่างเข้มแข็งเด็ดขาด วิธีนี้จะกระตุ้นคลื่นสมองหลั่งสารความง่วงตามธรรมชาติ`
+      });
+    } else {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 1",
+        title: "การปกป้องเวลานอนที่สมดุลและตื่นเป็นเวลา (Circadian Rhythm Consolidation)",
+        badge: "Sleep Hygiene",
+        type: "hygiene",
+        icon: "☀️",
+        detail: `คุณมีประสิทธิภาพการนอนเฉลี่ยในระดับที่ดีมาก (${eff}%) แนะนำให้ปกป้องเสถียรภาพนี้โดยการกำหนด "เวลาตื่นนอนที่แน่นอนแบบนาทีต่อนาที" แม้จะเป็นวันหยุดสุดสัปดาห์ก็ตาม เพื่อให้นาฬิกาชีวิตชีวภาพของคุณหมุนเวียนคงที่และหลับสนิทยิ่งขึ้นต่อๆ ไป`
+      });
+    }
+
+    // 2. ดัชนีความรุนแรงของโรค ISI > 14 (เสี่ยงโรคหลับยากระดับปานกลาง-รุนแรง) -> หลักการกระตุ้นควบคุม (Stimulus Control Therapy)
+    const isiScore = latestAss ? latestAss.isi : avgIsi;
+    if (isiScore > 14) {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 2",
+        title: "กฎการลุกออกจากเตียงใน 20 นาที (Stimulus Control Therapy)",
+        badge: "CBT-I แกนหลัก",
+        type: "clinical",
+        icon: "🚪",
+        detail: `สถิติคะแนนดัชนีการนอนหลับติดขัด (ISI) ของคุณสูงถึง ${isiScore} คะแนน แนะนำหักดิบสมองเชิงตอบสนอง: หากล้มตัวลงนอนแล้วยังคิดฟุ้งซ่านหรือตื่นมากลางดึกเกิน 20 นาที "ห้ามพยายามฝืนนอนต่อเด็ดขาด" ให้ลุกไปห้องอื่นที่สลัวๆ อ่านหนังสือเบาๆ หรือฟังเสียงระเบิดสมอง จนกว่าจะรู้สึกง่วงจัดจริงๆ ค่อยหวนกลับมาที่เตียง สมองจะได้จับคู่เตียงกับการหลับไม่ใช่ความกังวล`
+      });
+    } else {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 2",
+        title: "การปรับโครงสร้างเพื่อสลายความกดดันในการนอน (Cognitive Restructuring)",
+        badge: "Cognitive Therapy",
+        type: "hygiene",
+        icon: "🧠",
+        detail: `ระดับโรคสะสมรอบล่าสุดดีกว่าเกณฑ์ล่อแหลม ควรจำไว้เสมอว่า "การตื่นกลางดึกเป็นเรื่องธรรมชาติ" ทุกเสี้ยวคืนไม่ควรเอาการนอนหลับมาเป็นหน้าที่ที่ต้องทำให้สำเร็จ ยิ่งคุณคลายการคาดคั้นลง คลื่นประสาทสมองซีกคอร์เท็กซ์ก็จะยิ่งปรับสลัวลงอย่างรวดเร็วเป็นธรรมชาติ`
+      });
+    }
+
+    // 3. ปัจจัยความเครียดสะสม
+    const stressVal = avgStress;
+    if (stressVal >= 6) {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 3",
+        title: "ระบายความตึงเครียดของระบบชีวประสาท (Autonomic De-arousal)",
+        badge: "Arousal Reduction",
+        type: "clinical",
+        icon: "🫁",
+        detail: `ความเครียดของร่างกายอยู่ในเกณฑ์ค่อนข้างสูง (${stressVal}/10) แนะนำบำบัดชีวประสาทช่วงสมดุลกระตุ้น ด้วยการฝึก Progressive Muscle Relaxation (เกร็งและคลายมัดกล้ามเนื้อ 16 จุด) ผสานเสียงคลื่นหรือฝึกการหายใจลึกแบบ 4-7-8 นาน 5 นาทีก่อนปิดสวิตช์ไฟเพื่อตัดคลื่นสมองไฮเปอร์`
+      });
+    } else {
+      cbtiRecommendations.push({
+        step: "ขั้นตอนที่ 3",
+        title: "การจัดระเบียบสัญญาณก่อนนอน (Bedtime Buffer Zone)",
+        badge: "Wind-down Plan",
+        type: "hygiene",
+        icon: "☕",
+        detail: `ระดับภาวะกระตุ้นของคุณค่อนข้างสงบดี แนะนำให้จัดสภาพแวดล้อมเพื่อรักษาเสถียรภาพ เช่น งดทานอาหารมื้อหนักและคาเฟอีนล่วงหน้าอย่างน้อย 6 ชั่วโมง และทิ้งระยะห่างจากภาพหน้าจอแสงสีฟ้าอย่างน้อย 1 ชั่วโมงก่อนเข้าสู่ช่วงผ่อนคลาย`
+      });
+    }
+
+    // สร้างบทพูดเฉพาะเจาะจงให้โปรแกรม AI อ่านออกเสียงเสียงพากย์บำบัด
+    const fullSpeechScript = `สวัสดีครับคุณ${patientName} ผมคือโค้ชส่วนตัวคอสมอสที่จะพาคุณมาเปลี่ยนความคิดและพฤติกรรมการนอนแบบยั่งยืนด้วยหลัก ซีบีทีไอ ครับ. จากการวิเคราะห์รอบล่าสุดเฉพาะตัวคุณ มีคำแนะแนว 3 ขั้นตอนสำคัญดังนี้ครับ. ` +
+      cbtiRecommendations.map((r) => `${r.step}: ${r.title}. รายละเอียดแนะแนวคือ ${r.detail}. `).join(" ") +
+      ` ขอให้คุณ${patientName}ค่อยๆปรับตัวทีละนิดและรักษาวินัยอย่างใจเย็นนะครับ คอสมอสขอเป็นกำลังใจให้ทุกคืนเป็นคืนที่แสนสุขครับ.`;
+
+    const hasLogData = patientAssessments.length > 0 || patientDiaries.length > 0;
+
+    return (
+      <div className="space-y-6">
+        <div className="border-b border-sleep-blue-100 pb-3 flex flex-col md:flex-row md:items-center justify-between gap-2">
+          <div>
+            <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 1 : บทวิเคราะห์สุขภาวะและการแนะแนวเชิงพฤติกรรม (CBT-I)</h4>
+            <p className="text-xs text-sleep-blue-500 font-light">ดึงข้อมูลสถิติ ดัชนีจำลอง และวิเคราะห์คู่มือพฤเทคบำบัดส่วนบุคคล</p>
+          </div>
+          
+          {/* AI Voice Coach Engine Trigger */}
+          <button
+            onClick={() => handleSpeakTts(fullSpeechScript)}
+            className={`px-4 py-2 rounded-2xl text-xs font-bold transition flex items-center gap-2 shadow-sm shrink-0 uppercase tracking-wider ${
+              isSpeaking 
+                ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
+                : 'bg-sleep-blue-900 hover:bg-sleep-blue-800 text-white'
+            }`}
+          >
+            {isSpeaking ? (
+              <>
+                <VolumeX className="w-4 h-4 text-white" />
+                หยุดโค้ชเสียงบรรยาย
+              </>
+            ) : (
+              <>
+                <Volume2 className="w-4 h-4 text-sleep-gold-400" />
+                ให้ AI โค้ชส่วนตัวอ่านออกเสียงให้ฟัง 🔊
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Dynamic Voice Wave Visualizer when speaking */}
+        {isSpeaking && (
+          <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in space-y-2 sm:space-y-0">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-sleep-gold-500 animate-ping"></span>
+                <span className="text-xs font-semibold text-sleep-blue-950 font-sans">
+                  โค้ชเสียงบำบัดส่วนบุคคล Cozmos กำลังพูดคุยกับคุณ <strong className="text-sleep-blue-900">{patientName}</strong>...
+                </span>
+              </div>
+              <span className="text-[10px] text-amber-700 font-normal mt-1 block">
+                ℹ️ สำหรับผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างโทรศัพท์ (ดึงแถบปิดเสียงขึ้น) และเพิ่มระดับเสียงขึ้นด้วยนะคะ
+              </span>
+            </div>
+            {/* Minimal sound wave bars */}
+            <div className="flex items-center gap-1 justify-end">
+              {[1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2].map((height, i) => (
+                <div
+                  key={i}
+                  className="w-0.5 bg-sleep-gold-500 rounded-full animate-bounce"
+                  style={{
+                    height: `${height * 3}px`,
+                    animationDelay: `${i * 0.1}s`,
+                    animationDuration: '0.8s'
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Onboarding Empty State Banner for New/Empty Member */}
+        {!hasLogData && (
+          <div className="bg-gradient-to-r from-sleep-gold-500/10 to-transparent border-2 border-dashed border-sleep-gold-400/60 p-5 rounded-3xl space-y-3 shadow-sm">
+            <h5 className="font-bold text-sm text-sleep-blue-900 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-sleep-gold-500 animate-pulse shrink-0" />
+              💡 ยังไม่มีข้อมูลระเบียนสุขภาพสำหรับคุณ {patientName} (หน้าจอแสดงเป็น 0)
+            </h5>
+            <p className="text-xs text-sleep-blue-700 leading-relaxed max-w-4xl">
+              เนื่องจากคุณยังไม่มีระเบียบบันทึกสุขภาพ คะแนน สถิติความง่วงนอน ดัชนีนอนไม่หลับ (ISI) และประสิทธิภาพการนอนหลับจึงคํานวณหาค่าเฉลี่ยเป็นศูนย์ (0) ทั้งหมดครับ. ระบบยินดีรองรับการคัดกรองส่วนตัวของคุณ โดยคุณสามารถทำประเมินจริง หรือ <strong className="text-sleep-blue-950 font-extrabold">กดปุ่มสีทองด้านล่างเพื่อโหลดโปรไฟล์จำลองสุขภาพทางการแพทย์อัตโนมัติ</strong> เพื่อเห็นบทวิเคราะห์และรายงานสรุปวิเคราะห์ทั้งหมดของระบบ Cozmos ทันที!
+            </p>
+            {onUpdateDatabase && (
+              <button
+                onClick={handleLoadDemoData}
+                className="bg-sleep-gold-500 hover:bg-sleep-gold-400 text-sleep-blue-950 font-bold text-xs px-4 py-2.5 rounded-xl transition shadow-md inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                🧪 โหลดสถิติรักษาสุขภาพนอนหลับจำลองตรวจจับ สำหรับ {patientName}
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+            <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">สมาชิกครอบครัว</span>
+            <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{totalUsers} คน</strong>
+            <span className="text-[9px] text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">👤 100% บันทึก</span>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+            <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ดัชนีนอนไม่หลับเฉลี่ย</span>
+            <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgIsi}</strong>
+            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full inline-block font-sans ${
+              avgIsi > 14 ? 'text-red-600 bg-red-50' : 'text-orange-600 bg-orange-50'
+            }`}>
+              {avgIsi > 14 ? '⚠️ ระดับปานกลาง' : '🟢 ระดับเฝ้าระวัง'}
+            </span>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+            <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ความง่วงสะสม ESS</span>
+            <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEss}</strong>
+            <span className="text-[9px] text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-full inline-block font-sans">⚡ ล้าง่วงสะสม</span>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+            <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ประสิทธิภาพหลับรวม</span>
+            <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEfficiency}%</strong>
+            <span className="text-[9px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">🟢 รักษาเสถียรภาพ</span>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+            <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ระดับเครียดร่างกาย</span>
+            <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgStress}/10</strong>
+            <span className="text-[9px] text-red-500 bg-red-50 px-2 py-0.5 rounded-full inline-block font-sans">🔴 ผ่อนคลายกล้ามเนื้อ</span>
+          </div>
+        </div>
+
+        {/* แนะนำ CBT-I & Sleep Hygiene Panel */}
+        <div className="bg-gradient-to-br from-[#0B1026] to-[#0f173d] text-white p-6 rounded-3xl border border-sleep-gold-400/20 shadow-xl space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-2">
+            <div className="space-y-1">
+              <h5 className="font-semibold text-base text-sleep-gold-400 flex items-center gap-1.5">
+                <Sparkles className="w-5 h-5 text-sleep-gold-400" />
+                Cozmos Personal CBT-I Sleep Coach
+              </h5>
+              <p className="text-xs text-white/50 font-light">เส้นทางปรับวิธีคิดควบคู่ไปกับตารางสรีรวิทยา เพื่อการหายขาดจากโรคระยะยาว</p>
+            </div>
+            <span className="text-[10px] bg-sleep-gold-500/20 text-sleep-gold-400 border border-sleep-gold-500/30 px-3 py-1 rounded-full font-mono uppercase font-bold self-start sm:self-center">
+              Personalized for {patientName}
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {cbtiRecommendations.map((rec, i) => (
+              <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3 hover:bg-white/10 transition-all relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-sleep-gold-400/5 rounded-full blur-xl group-hover:bg-sleep-gold-400/10 transition"></div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-sleep-gold-300 font-bold bg-sleep-gold-500/10 border border-sleep-gold-400/20 px-2.5 py-1 rounded-lg">
+                    {rec.step} • {rec.badge}
+                  </span>
+                  <span className="text-2xl">{rec.icon}</span>
+                </div>
+                <h6 className="font-bold text-sm text-white tracking-wide leading-snug">{rec.title}</h6>
+                <p className="text-[11px] text-white/80 leading-relaxed font-light">{rec.detail}</p>
+                
+                <div className="pt-2 border-t border-white/5 flex justify-between items-center text-[9px] text-white/40">
+                  <span>CBT-I Pathway ✔️</span>
+                  <span>ความน่าเชื่อถือทางคลินิกสูง</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h5 className="font-semibold text-sm text-sleep-blue-950 flex items-center gap-1">
+              <Heart className="w-4 h-4 text-red-500 animate-pulse" />
+              สรุปข้อคิดเห็นภาพรวมประจำบ้าน
+            </h5>
+            <p className="text-xs text-sleep-blue-600 font-light leading-relaxed max-w-2xl">
+              แปลผลภาพรวมจากพฤทีกรรมคนในบ้าน: ดัชนีเฉลี่ยชี้ว่าสมาชิกส่วนใหญ่มีสุขอนามัยการนอนหลับค่อนข้างดีแต่อาจมีความเหนื่อยล้าสะสมบางสัปดาห์ การรักษาวินัยการจัดเตียง อุณหภูมิห้องนอน และใช้วิธี Zodiac Sleep Sync จะช่วยส่งเสริมให้นอนหลับได้สนิทยิ่งขึ้นครับ
+            </p>
+          </div>
+          <div className="text-right flex flex-col justify-center shrink-0">
+            <span className="text-[10px] text-sleep-blue-400 font-mono">DATABASE ENGINE</span>
+            <strong className="text-xs font-semibold text-sleep-blue-900 uppercase">Google Sheets Live Sync</strong>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPage2 = () => (
     <div className="space-y-6">
       <div className="border-b border-sleep-blue-100 pb-3">
         <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 2 : สถิติและรายละเอียดพฤติกรรมการนอนในบ้าน</h4>
         <p className="text-xs text-sleep-blue-500 font-light">แสดงสถิติกราฟเส้นชั่วโมงการนอนและเปรียบเทียบอาการคะแนนประเมินของสมาชิก</p>
       </div>
+
       {sleepAnalyticsData.length === 0 ? (
         <div className="text-center py-10 bg-white rounded-2xl border border-dashed text-xs text-sleep-blue-600">
           ไม่มีประวัติการส่งไดอารี่ของสมาชิกคนนี้ ลองจดบันทึกพฤติกรรมก่อนนะครับ
@@ -684,6 +717,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
               </ResponsiveContainer>
             </div>
           </div>
+
           <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm">
             <h5 className="font-semibold text-xs text-sleep-blue-900 mb-3 uppercase tracking-wider text-center">กราฟ 2: ดัชนีความเครียดและง่วงนอน (ISI & ESS)</h5>
             <div className="h-48">
@@ -703,14 +737,15 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       )}
     </div>
-  ), [sleepAnalyticsData]);
+  );
 
-  const renderPage3 = useCallback(() => (
+  const renderPage3 = () => (
     <div className="space-y-6">
       <div className="border-b border-sleep-blue-100 pb-3">
         <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 3 : การเฝ้าระวังความรุนแรงนอนไม่หลับ (ISI)</h4>
         <p className="text-xs text-sleep-blue-500 font-light">สัดส่วนของเกณฑ์คลินิก ISI แยกตามระดับความรุนแรง</p>
       </div>
+
       <div className="bg-white p-5 rounded-3xl border border-sleep-blue-100 shadow-sm">
         <h5 className="font-semibold text-xs text-sleep-blue-950 mb-4 text-center">เกณฑ์กระจายโรค ISI Scale</h5>
         <div className="h-64 max-w-lg mx-auto">
@@ -736,9 +771,9 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       </div>
     </div>
-  ), [isiDistData]);
+  );
 
-  const renderPage4 = useCallback(() => (
+  const renderPage4 = () => (
     <div className="space-y-6">
       <div className="border-b border-sleep-blue-100 pb-3">
         <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 4 : ปัจจัยพฤติกรรม (Correlation)</h4>
@@ -795,9 +830,9 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       )}
     </div>
-  ), [correlationData]);
+  );
 
-  const renderPage5 = useCallback(() => (
+  const renderPage5 = () => (
     <div className="space-y-6">
       <div className="border-b border-sleep-blue-100 pb-3">
         <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 5 : สถิติการใช้งานเครื่องมือบำบัดนอนหลับ</h4>
@@ -812,7 +847,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
               <XAxis type="number" stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'เวลาใช้งานสะสม (นาที)', position: 'insideBottom', offset: -10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
               <YAxis type="category" dataKey="name" width={150} stroke="#64748B" style={{ fontSize: '10px' }} />
               <Tooltip formatter={(value) => [`${value} นาที`, 'เวลาที่ใช้']} />
-              <Bar dataKey="value" radius={[0,6,6,0]}>
+              <Bar dataKey="value" diagnosis-id="wellness-bar" radius={[0,6,6,0]}>
                 {wellnessStatsData.map(entry => (
                   <Cell key={entry.name} fill={entry.fill} />
                 ))}
@@ -822,9 +857,9 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       </div>
     </div>
-  ), [wellnessStatsData]);
+  );
 
-  const renderPage6 = useCallback(() => (
+  const renderPage6 = () => (
     <div className="space-y-6">
       <div className="border-b pb-3 flex flex-col sm:flex-row justify-between gap-4">
         <div>
@@ -841,6 +876,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
           ขอรายงานใหม่
         </button>
       </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white p-4 rounded-2xl border shadow-sm text-center">
           <h5 className="font-semibold text-xs mb-2">สัดส่วนอารมณ์ไดอารี่</h5>
@@ -862,6 +898,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
             ))}
           </div>
         </div>
+
         <div className="bg-sleep-gold-50 border border-sleep-gold-300 p-5 rounded-3xl col-span-2 space-y-4">
           <div className="flex justify-between items-center">
             <h5 className="font-semibold text-sm flex items-center gap-1">
@@ -870,6 +907,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
             </h5>
             <span className="text-[10px] bg-sleep-blue-900 text-white px-2 py-0.5 rounded">อัจฉริยะ</span>
           </div>
+
           {loadingReport ? (
             <div className="py-10 text-center">
               <Compass className="w-8 h-8 animate-spin mx-auto text-sleep-blue-900" />
@@ -891,10 +929,11 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       </div>
     </div>
-  ), [loadingReport, reportError, aiReport, moodData, fetchWeeklyReport, activePatientId]);
+  );
 
   return (
     <div className="space-y-6" id="looker-dashboard">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-semibold text-sleep-blue-900 flex items-center gap-2">
@@ -902,13 +941,18 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
             แดชบอร์ดวิเคราะห์สุขภาพครอบครัวเชิงลึก
           </h2>
         </div>
+
+        {/* Page Navigation */}
         <div className="flex bg-sleep-blue-900 text-white rounded-2xl p-1 gap-1 flex-wrap shadow">
           {[1,2,3,4,5,6].map(page => (
             <button
-              key={`nav-${page}`}
+              key={page}
               onClick={() => setActivePage(page)}
+              aria-label={`ไปหน้า ${page}`}
               className={`px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                activePage === page ? 'bg-sleep-gold-500 text-[#0B1026] shadow' : 'hover:bg-white/10'
+                activePage === page 
+                  ? 'bg-sleep-gold-500 text-[#0B1026] shadow' 
+                  : 'hover:bg-white/10'
               }`}
             >
               หน้า {page}
@@ -917,6 +961,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       </div>
 
+      {/* Main Canvas */}
       <div className="bg-white border-3 border-sleep-blue-900 rounded-3xl overflow-hidden shadow-lg min-h-[480px]">
         <div className="bg-sleep-blue-900 text-white p-4 px-6 flex justify-between items-center flex-col sm:flex-row gap-3 border-b border-sleep-blue-900">
           <div className="flex items-center gap-2">
