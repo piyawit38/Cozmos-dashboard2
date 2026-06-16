@@ -45,19 +45,42 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
   const [reportError, setReportError] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // ---------- TTS related state & refs ----------
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voicesLoaded, setVoicesLoaded] = useState(false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const activeUtterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
 
-  // Initialize Speech Synthesis
+  // Initialize Speech Synthesis and load voices
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      synthRef.current = window.speechSynthesis;
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      console.warn('Speech Synthesis not supported');
+      return;
     }
-    return () => {
-      if (synthRef.current) {
-        synthRef.current.cancel();
+
+    const synth = window.speechSynthesis;
+    synthRef.current = synth;
+
+    // Function to check and set voices loaded
+    const checkVoices = () => {
+      if (synth.getVoices().length > 0) {
+        setVoicesLoaded(true);
+      } else {
+        // In some browsers, voices may load later
+        setVoicesLoaded(false);
       }
+    };
+
+    // Initial check
+    checkVoices();
+
+    // Listen for voices changed event
+    synth.addEventListener('voiceschanged', checkVoices);
+
+    return () => {
+      synth.removeEventListener('voiceschanged', checkVoices);
+      synth.cancel();
+      synthRef.current = null;
     };
   }, []);
 
@@ -70,6 +93,34 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     }
   }, [activePage, activePatientId]);
 
+  // ---------- TTS helper: ensure voices are loaded ----------
+  const ensureVoicesLoaded = useCallback((): Promise<void> => {
+    return new Promise((resolve) => {
+      const synth = synthRef.current;
+      if (!synth) {
+        resolve(); // will be handled later
+        return;
+      }
+
+      if (synth.getVoices().length > 0) {
+        setVoicesLoaded(true);
+        resolve();
+      } else {
+        // Wait for voices to load, check every 200ms
+        const check = () => {
+          if (synth.getVoices().length > 0) {
+            setVoicesLoaded(true);
+            resolve();
+          } else {
+            setTimeout(check, 200);
+          }
+        };
+        check();
+      }
+    });
+  }, []);
+
+  // Split text into manageable chunks for TTS
   const splitTextIntoSentences = (text: string): string[] => {
     const parts = text.split(/[\n,。．\.。、\s]+/);
     const chunks: string[] = [];
@@ -94,21 +145,41 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     return chunks;
   };
 
-  const handleSpeakTts = (textToSpeak: string) => {
-    if (!synthRef.current) return;
+  // Main TTS handler
+  const handleSpeakTts = useCallback(async (textToSpeak: string) => {
+    const synth = synthRef.current;
+    if (!synth) {
+      alert('เบราว์เซอร์ของคุณไม่รองรับการอ่านออกเสียง (Speech Synthesis)');
+      return;
+    }
 
+    // Toggle off if already speaking
     if (isSpeaking) {
-      synthRef.current.cancel();
-      if (synthRef.current.paused) {
-        synthRef.current.resume();
-      }
+      synth.cancel();
       setIsSpeaking(false);
       activeUtterancesRef.current = [];
       return;
     }
 
-    synthRef.current.cancel();
-    
+    // Wait for voices to be ready
+    try {
+      await ensureVoicesLoaded();
+    } catch (err) {
+      console.error('Error loading voices:', err);
+      alert('ไม่สามารถโหลดเสียงได้ กรุณาลองใหม่อีกครั้ง');
+      return;
+    }
+
+    // If still no voices after waiting, show alert
+    if (synth.getVoices().length === 0) {
+      alert('ไม่พบเสียงในระบบ กรุณาลองใช้อุปกรณ์อื่นหรือตรวจสอบการตั้งค่าเสียง');
+      return;
+    }
+
+    // Cancel any ongoing speech
+    synth.cancel();
+
+    // Clean and split text
     const cleanText = textToSpeak.replace(/[#*`_~]/g, '');
     const chunks = splitTextIntoSentences(cleanText);
     const utterances: SpeechSynthesisUtterance[] = [];
@@ -120,10 +191,13 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       u.lang = 'th-TH';
       u.rate = 1.05;
 
-      const voices = synthRef.current?.getVoices() || [];
+      const voices = synth.getVoices();
       const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
       if (thVoice) {
         u.voice = thVoice;
+      } else {
+        // Fallback to first available voice if no Thai voice
+        if (voices.length > 0) u.voice = voices[0];
       }
 
       if (index === chunks.length - 1) {
@@ -133,22 +207,25 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         };
       }
       u.onerror = (e) => {
-        console.error("Speech dashboard error:", e);
+        console.error('Speech error:', e);
         setIsSpeaking(false);
         activeUtterancesRef.current = [];
+        // Optionally show a brief error (but avoid alert spam)
+        // We can set a state to show a toast, but for simplicity we just log
+      };
+      u.onstart = () => {
+        console.log(`Speaking chunk ${index + 1}/${chunks.length}`);
       };
       utterances.push(u);
     });
 
     activeUtterancesRef.current = utterances;
 
-    if (synthRef.current.paused) {
-      synthRef.current.resume();
-    }
+    // Speak each utterance sequentially
+    utterances.forEach(u => synth.speak(u));
+  }, [isSpeaking, ensureVoicesLoaded]);
 
-    utterances.forEach(u => synthRef.current?.speak(u));
-  };
-
+  // ---------- Load demo data (unchanged) ----------
   const handleLoadDemoData = () => {
     const targetId = activePatientId;
     const patientName = getPatientName(database.users, targetId);
@@ -207,7 +284,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     }
   };
 
-  // ---------- Memoized calculations ----------
+  // ---------- Memoized calculations (unchanged) ----------
   const totalUsers = database.users.length;
 
   const avgIsi = useMemo(() => {
@@ -274,16 +351,15 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       { name: 'เล็กน้อย (8-14)', count: mild, fill: '#facc15' },
       { name: 'ปานกลาง (15-21)', count: moderate, fill: '#fb923c' },
       { name: 'รุนแรง (22-28)', count: severe, fill: '#f87171' }
-    ].filter(d => d.count > 0); // hide zero categories
+    ].filter(d => d.count > 0);
   }, [database.assessments]);
 
-  // Page 4: correlation data – only include complete pairs
+  // Page 4: correlation data
   const correlationData = useMemo(() => {
     const result: any[] = [];
     database.sleepDiary.forEach(diary => {
       const factor = database.dailyFactors.find(f => f.patientId === diary.patientId && f.date === diary.date);
       const assessment = database.assessments.find(a => a.patientId === diary.patientId);
-      // Only include if we have both factor and assessment for better accuracy
       if (factor && assessment) {
         result.push({
           stress: factor.stressScore,
@@ -337,9 +413,8 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     ].filter(d => d.value > 0);
   }, [database.journals]);
 
-  // ---------- API call with abort and fallback ----------
+  // ---------- API call for AI report (unchanged) ----------
   const fetchWeeklyReport = useCallback(async () => {
-    // Cancel previous request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -372,11 +447,9 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         return;
       }
       console.error(err);
-      // Friendly fallback message
       setReportError(
         'ไม่สามารถเชื่อมต่อกับระบบ AI ได้ในขณะนี้ กรุณาลองอีกครั้งภายหลัง หรือตรวจสอบว่า backend server ทำงานอยู่'
       );
-      // Optional: fallback mock report for demo (remove in production)
       if (process.env.NODE_ENV === 'development') {
         setAiReport('[โหมดพัฒนา] รายงานตัวอย่าง: สมาชิกในครอบครัวมีแนวโน้มความเครียดลดลง 10% เมื่อเทียบกับสัปดาห์ที่ผ่านมา แนะนำฝึกหายใจก่อนนอนอย่างน้อย 5 นาที');
       }
@@ -388,7 +461,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     }
   }, [activePatientId]);
 
-  // Trigger report fetch when page 6 is active or patient changes
   useEffect(() => {
     if (activePage === 6) {
       fetchWeeklyReport();
@@ -400,17 +472,14 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     };
   }, [activePage, activePatientId, fetchWeeklyReport]);
 
-  // ---------- Render helper for each page (keeps JSX clean) ----------
+  // ---------- Render pages (unchanged except TTS button) ----------
   const renderPage1 = () => {
-    // ดึงค่าของคนไข้คนปัจจุบันเพื่อทำคำแนะนำเฉพาะบุคคล (Tailored recommendations)
     const latestAss = patientAssessments[patientAssessments.length - 1];
     const latestDiary = patientDiaries[patientDiaries.length - 1];
     const patientName = getPatientName(database.users, activePatientId);
 
-    // คำนวณคำแนะนำตามหลักการแพทย์อิงหลักฐาน (Evidence-based sleep guidelines & CBT-I)
     const cbtiRecommendations = [];
     
-    // 1. ประสิทธิภาพการนอนต่ำกว่า 85% -> หลักการจำกัดชั่วโมงบนเตียง (Sleep Restriction Therapy)
     const eff = latestDiary ? latestDiary.sleepEfficiency : avgEfficiency;
     if (eff < 85) {
       cbtiRecommendations.push({
@@ -432,7 +501,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       });
     }
 
-    // 2. ดัชนีความรุนแรงของโรค ISI > 14 (เสี่ยงโรคหลับยากระดับปานกลาง-รุนแรง) -> หลักการกระตุ้นควบคุม (Stimulus Control Therapy)
     const isiScore = latestAss ? latestAss.isi : avgIsi;
     if (isiScore > 14) {
       cbtiRecommendations.push({
@@ -454,7 +522,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       });
     }
 
-    // 3. ปัจจัยความเครียดสะสม
     const stressVal = avgStress;
     if (stressVal >= 6) {
       cbtiRecommendations.push({
@@ -476,7 +543,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       });
     }
 
-    // สร้างบทพูดเฉพาะเจาะจงให้โปรแกรม AI อ่านออกเสียงเสียงพากย์บำบัด
     const fullSpeechScript = `สวัสดีครับคุณ${patientName} ผมคือโค้ชส่วนตัวคอสมอสที่จะพาคุณมาเปลี่ยนความคิดและพฤติกรรมการนอนแบบยั่งยืนด้วยหลัก ซีบีทีไอ ครับ. จากการวิเคราะห์รอบล่าสุดเฉพาะตัวคุณ มีคำแนะแนว 3 ขั้นตอนสำคัญดังนี้ครับ. ` +
       cbtiRecommendations.map((r) => `${r.step}: ${r.title}. รายละเอียดแนะแนวคือ ${r.detail}. `).join(" ") +
       ` ขอให้คุณ${patientName}ค่อยๆปรับตัวทีละนิดและรักษาวินัยอย่างใจเย็นนะครับ คอสมอสขอเป็นกำลังใจให้ทุกคืนเป็นคืนที่แสนสุขครับ.`;
@@ -491,7 +557,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
             <p className="text-xs text-sleep-blue-500 font-light">ดึงข้อมูลสถิติ ดัชนีจำลอง และวิเคราะห์คู่มือพฤเทคบำบัดส่วนบุคคล</p>
           </div>
           
-          {/* AI Voice Coach Engine Trigger */}
+          {/* TTS Button with status */}
           <button
             onClick={() => handleSpeakTts(fullSpeechScript)}
             className={`px-4 py-2 rounded-2xl text-xs font-bold transition flex items-center gap-2 shadow-sm shrink-0 uppercase tracking-wider ${
@@ -514,7 +580,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
           </button>
         </div>
 
-        {/* Dynamic Voice Wave Visualizer when speaking */}
+        {/* Voice wave visualizer */}
         {isSpeaking && (
           <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in space-y-2 sm:space-y-0">
             <div className="flex flex-col">
@@ -528,7 +594,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
                 ℹ️ สำหรับผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างโทรศัพท์ (ดึงแถบปิดเสียงขึ้น) และเพิ่มระดับเสียงขึ้นด้วยนะคะ
               </span>
             </div>
-            {/* Minimal sound wave bars */}
             <div className="flex items-center gap-1 justify-end">
               {[1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2].map((height, i) => (
                 <div
@@ -545,7 +610,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
           </div>
         )}
 
-        {/* Onboarding Empty State Banner for New/Empty Member */}
         {!hasLogData && (
           <div className="bg-gradient-to-r from-sleep-gold-500/10 to-transparent border-2 border-dashed border-sleep-gold-400/60 p-5 rounded-3xl space-y-3 shadow-sm">
             <h5 className="font-bold text-sm text-sleep-blue-900 flex items-center gap-2">
@@ -602,7 +666,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
           </div>
         </div>
 
-        {/* แนะนำ CBT-I & Sleep Hygiene Panel */}
         <div className="bg-gradient-to-br from-[#0B1026] to-[#0f173d] text-white p-6 rounded-3xl border border-sleep-gold-400/20 shadow-xl space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-2">
             <div className="space-y-1">
@@ -899,6 +962,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     </div>
   );
 
+  // ---------- Main Render ----------
   return (
     <div className="space-y-6" id="looker-dashboard">
       {/* Header */}
