@@ -124,8 +124,30 @@ export default function SleepScreening({
     return chunks;
   }, []);
 
+  const unlockAudioRef = useCallback(() => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        const ctx = new AudioContextClass();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+      }
+    } catch (e) {
+      console.warn("Unblocking audio context error:", e);
+    }
+  }, []);
+
   const handleToggleSpeech = useCallback(() => {
     if (!synthRef.current) return;
+
+    // Unblock mobile browser audio context synchronously in this click handler
+    unlockAudioRef();
 
     if (isSpeaking) {
       synthRef.current.cancel();
@@ -135,12 +157,19 @@ export default function SleepScreening({
       setIsSpeaking(false);
       activeUtterancesRef.current = [];
     } else {
+      // Turn off other speaking modes
       if (isSpeakingEval) {
         synthRef.current.cancel();
         if (synthRef.current.paused) {
           synthRef.current.resume();
         }
         setIsSpeakingEval(false);
+      }
+
+      // Safely clear any residue speech
+      synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
       }
 
       // Cleanup text markup to speak cleanly
@@ -153,47 +182,75 @@ export default function SleepScreening({
         .replace(/:/g, ' ');
 
       const chunks = splitTextIntoSentences(cleanText);
-      const utterances: SpeechSynthesisUtterance[] = [];
+      if (chunks.length === 0) return;
 
       setIsSpeaking(true);
 
-      chunks.forEach((chunk, index) => {
-        const u = new SpeechSynthesisUtterance(chunk);
+      // Run sequential speech loop manually to bypass iOS Safari's queues hanging bug
+      let currentIndex = 0;
+      activeUtterancesRef.current = [];
+
+      const speakNextChunk = () => {
+        if (!synthRef.current || currentIndex >= chunks.length || !isSpeaking) {
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+          return;
+        }
+
+        const chunkText = chunks[currentIndex];
+        const u = new SpeechSynthesisUtterance(chunkText);
         u.lang = 'th-TH';
         u.rate = 1.0;
 
-        const voices = synthRef.current?.getVoices() || [];
+        const voices = synthRef.current.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        if (index === chunks.length - 1) {
-          u.onend = () => {
+        u.onend = () => {
+          currentIndex++;
+          // Small safety timeout to prevent mobile engines from hanging
+          setTimeout(() => {
+            speakNextChunk();
+          }, 30);
+        };
+
+        u.onerror = (e) => {
+          console.error("Speech chunk execution error:", e);
+          // Play next in line anyway, or stop if canceled
+          if (e.error !== 'interrupted') {
+            currentIndex++;
+            setTimeout(() => {
+              speakNextChunk();
+            }, 30);
+          } else {
             setIsSpeaking(false);
             activeUtterancesRef.current = [];
-          };
-        }
-        u.onerror = (e) => {
-          console.error("Speech error:", e);
-          setIsSpeaking(false);
-          activeUtterancesRef.current = [];
+          }
         };
-        utterances.push(u);
-      });
 
-      activeUtterancesRef.current = utterances;
+        activeUtterancesRef.current = [u];
+        
+        // Ensure not in pause state
+        if (synthRef.current.paused) {
+          synthRef.current.resume();
+        }
+        synthRef.current.speak(u);
+      };
 
-      if (synthRef.current.paused) {
-        synthRef.current.resume();
-      }
-
-      utterances.forEach(u => synthRef.current?.speak(u));
+      // iOS Safe trigger delay after canceling previous queue
+      setTimeout(() => {
+        speakNextChunk();
+      }, 80);
     }
-  }, [aiAdvice, isSpeaking, isSpeakingEval, splitTextIntoSentences]);
+  }, [aiAdvice, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
 
   const handleToggleSpeechEval = useCallback(() => {
     if (!synthRef.current) return;
+
+    // Unblock mobile browser audio context synchronously in this click handler
+    unlockAudioRef();
 
     if (isSpeakingEval) {
       synthRef.current.cancel();
@@ -203,12 +260,19 @@ export default function SleepScreening({
       setIsSpeakingEval(false);
       activeUtterancesRef.current = [];
     } else {
+      // Turn off other speaking modes
       if (isSpeaking) {
         synthRef.current.cancel();
         if (synthRef.current.paused) {
           synthRef.current.resume();
         }
         setIsSpeaking(false);
+      }
+
+      // Safely clear any residue speech
+      synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
       }
 
       // Compile clean Thai spoken text for the clinical evaluation results
@@ -269,44 +333,66 @@ export default function SleepScreening({
       }
 
       const chunks = splitTextIntoSentences(evalText);
-      const utterances: SpeechSynthesisUtterance[] = [];
+      if (chunks.length === 0) return;
 
       setIsSpeakingEval(true);
 
-      chunks.forEach((chunk, index) => {
-        const u = new SpeechSynthesisUtterance(chunk);
+      // Run sequential speech loop manually to bypass iOS Safari's queues hanging bug
+      let currentIndex = 0;
+      activeUtterancesRef.current = [];
+
+      const speakNextChunk = () => {
+        if (!synthRef.current || currentIndex >= chunks.length || !isSpeakingEval) {
+          setIsSpeakingEval(false);
+          activeUtterancesRef.current = [];
+          return;
+        }
+
+        const chunkText = chunks[currentIndex];
+        const u = new SpeechSynthesisUtterance(chunkText);
         u.lang = 'th-TH';
         u.rate = 1.05;
 
-        const voices = synthRef.current?.getVoices() || [];
+        const voices = synthRef.current.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        if (index === chunks.length - 1) {
-          u.onend = () => {
+        u.onend = () => {
+          currentIndex++;
+          setTimeout(() => {
+            speakNextChunk();
+          }, 30);
+        };
+
+        u.onerror = (e) => {
+          console.error("Speech eval chunk instruction error:", e);
+          if (e.error !== 'interrupted') {
+            currentIndex++;
+            setTimeout(() => {
+              speakNextChunk();
+            }, 30);
+          } else {
             setIsSpeakingEval(false);
             activeUtterancesRef.current = [];
-          };
-        }
-        u.onerror = (e) => {
-          console.error("Speech eval error:", e);
-          setIsSpeakingEval(false);
-          activeUtterancesRef.current = [];
+          }
         };
-        utterances.push(u);
-      });
 
-      activeUtterancesRef.current = utterances;
+        activeUtterancesRef.current = [u];
+        
+        if (synthRef.current.paused) {
+          synthRef.current.resume();
+        }
+        synthRef.current.speak(u);
+      };
 
-      if (synthRef.current.paused) {
-        synthRef.current.resume();
-      }
-
-      utterances.forEach(u => synthRef.current?.speak(u));
+      // iOS Safe trigger delay after canceling previous queue
+      setTimeout(() => {
+        speakNextChunk();
+      }, 80);
     }
-  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, splitTextIntoSentences]);
+  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
 
   const totalIsi = useMemo(() => isiAnswers.reduce((s, v) => s + v, 0), [isiAnswers]);
   const totalEss = useMemo(() => essAnswers.reduce((s, v) => s + v, 0), [essAnswers]);
