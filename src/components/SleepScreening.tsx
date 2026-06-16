@@ -24,18 +24,18 @@ const ISI_QUESTIONS = [
   { text: "ความพึงพอใจต่อการนอน", options: ["พอใจมาก (0)", "พอใจ (1)", "ปานกลาง (2)", "ไม่ค่อยพอใจ (3)", "ไม่พอใจเลย (4)"], values: [0, 1, 2, 3, 4] },
   { text: "การรบกวนการใช้ชีวิต", options: ["ไม่รบกวน (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "รบกวนมากที่สุด (4)"], values: [0, 1, 2, 3, 4] },
   { text: "ความกังวลเรื่องการนอน", options: ["ไม่กังวล (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "กังวลมากที่สุด (4)"], values: [0, 1, 2, 3, 4] },
-  { text: "คนรอบข้างสังเกตเห็นปัญหาการนอน", options: ["ไม่เห็น (0)", "เห็นเล็กน้อย (1)", "เห็นปานกลาง (2)", "เห็นมาก (3)", "เห็นชัดเจนมากที่สุด (4)"], values: [0, 1, 2, 3, 4] }
+  { text: "คนอื่นมองเห็นปัญหาการนอนของท่านรบกวนชีวิตประจำวันหรือไม่", options: ["ไม่สังเกตเห็น (0)", "เล็กน้อย (1)", "ปานกลาง (2)", "มาก (3)", "สังเกตเห็นเด่นชัดมากที่สุด (4)"], values: [0, 1, 2, 3, 4] }
 ];
 
 const ESS_QUESTIONS = [
   "นั่งอ่านหนังสือเงียบๆ ในห้องส่วนตัว",
-  "นั่งดูโทรทัศน์ หรือภาพยนตร์ยาวๆ",
-  "นั่งเฉยๆ ในสถานที่สาธารณะ เช่น ในโรงละคร หรือในห้องประชุม",
-  "นั่งโดยสารในรถยนต์ นั่งเฉยๆ เป็นเวลา 1 ชั่วโมงโดยไม่ลุกไปไหน",
-  "นอนราบเพื่อพักผ่อนในเวลากลางวัน หรือบ่ายเมื่อเอื้ออำนวย",
-  "นั่งพูดคุยสนทนากับเพื่อนหรือครอบครัว",
-  "นั่งอยู่อย่างเงียบสงบหลังจากรับประทานอาหารกลางวัน (โดยไม่ดื่มแอลกอฮอล์)",
-  "นั่งอยู่ในรถยนต์ขณะที่จราจรติดขัดหรือหยุดรอสัญญาณไฟสักครู่"
+  "นั่งดูโทรทัศน์หรือภาพยนตร์เป็นเวลานาน",
+  "นั่งเฉยๆ ในสถานที่สาธารณะ เช่น ในโรงละคร ห้องประชุม หรือห้องเรียน",
+  "นั่งโดยสารในรถยนต์ นั่งเฉยๆ เป็นเวลา 1 ชั่วโมงติดต่อกันโดยไม่ได้พัก",
+  "นอนราบเพื่อพักผ่อน in เวลากลางวันหรืองีบบ่ายเมื่อมีโอกาสเอื้ออำนวย",
+  "นั่งพูดคุยปรึกษาหารือกับผู้อื่นอย่างเป็นธรรมชาติ",
+  "นั่งอยู่อย่างเงียบสงบหลังรับประทานอาหารกลางวัน (โดยไม่ได้ดื่มเครื่องดื่มแอลกอฮอล์)",
+  "นั่งนิ่งๆ อยู่ในรถยนต์ขณะที่จราจรติดขัดหรือหยุดรอสัญญาณไฟสักครู่"
 ];
 
 const STOPBANG_QUESTIONS = [
@@ -100,30 +100,6 @@ export default function SleepScreening({
     };
   }, []);
 
-  const splitTextIntoSentences = useCallback((text: string): string[] => {
-    const parts = text.split(/[\n,。．\.。、\s]+/);
-    const chunks: string[] = [];
-    let currentChunk = "";
-    
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      
-      if (currentChunk.length + trimmed.length > 120) {
-        if (currentChunk) {
-          chunks.push(currentChunk);
-        }
-        currentChunk = trimmed;
-      } else {
-        currentChunk = currentChunk ? currentChunk + " " + trimmed : trimmed;
-      }
-    }
-    if (currentChunk) {
-      chunks.push(currentChunk);
-    }
-    return chunks;
-  }, []);
-
   const unlockAudioRef = useCallback(() => {
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -143,11 +119,25 @@ export default function SleepScreening({
     }
   }, []);
 
+  const unlockSpeechSynthesis = useCallback(() => {
+    try {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        const unlockUtterance = new SpeechSynthesisUtterance(" ");
+        unlockUtterance.lang = "th-TH";
+        unlockUtterance.volume = 0;
+        window.speechSynthesis.speak(unlockUtterance);
+      }
+    } catch (e) {
+      console.warn("Unblocking speech synthesis error:", e);
+    }
+  }, []);
+
   const handleToggleSpeech = useCallback(() => {
     if (!synthRef.current) return;
 
-    // Unblock mobile browser audio context synchronously in this click handler
+    // Unblock mobile browser audio and speech synthesis synchronously in this click handler
     unlockAudioRef();
+    unlockSpeechSynthesis();
 
     if (isSpeaking) {
       synthRef.current.cancel();
@@ -181,57 +171,48 @@ export default function SleepScreening({
         .replace(/✨/g, '')
         .replace(/:/g, ' ');
 
-      const chunks = splitTextIntoSentences(cleanText);
-      if (chunks.length === 0) return;
+      if (!cleanText.trim()) return;
 
       setIsSpeaking(true);
 
-      const utterances: SpeechSynthesisUtterance[] = [];
-      activeUtterancesRef.current = [];
+      // Play consolidated utterance after short delay allowing potential cancel to clear from queue.
+      // This is 100% fine on iOS because we already unblocked iOS audio synchronously above.
+      setTimeout(() => {
+        if (!synthRef.current) return;
 
-      chunks.forEach((chunkText, index) => {
-        const u = new SpeechSynthesisUtterance(chunkText);
+        const u = new SpeechSynthesisUtterance(cleanText);
         u.lang = 'th-TH';
         u.rate = 1.0;
 
-        const voices = synthRef.current?.getVoices() || [];
+        const voices = synthRef.current.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        if (index === chunks.length - 1) {
-          u.onend = () => {
-            setIsSpeaking(false);
-            activeUtterancesRef.current = [];
-          };
-        }
+        u.onend = () => {
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+        };
 
         u.onerror = (e) => {
           console.error("Speech chunk execution error:", e);
-          if (e.error !== 'interrupted') {
-            setIsSpeaking(false);
-            activeUtterancesRef.current = [];
-          }
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
         };
 
-        utterances.push(u);
-      });
-
-      activeUtterancesRef.current = utterances;
-
-      // Queue all utterances synchronously within user-trigger block to completely satisfy mobile security model
-      utterances.forEach(u => {
-        synthRef.current?.speak(u);
-      });
+        activeUtterancesRef.current = [u];
+        synthRef.current.speak(u);
+      }, 100);
     }
-  }, [aiAdvice, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
+  }, [aiAdvice, isSpeaking, isSpeakingEval, unlockAudioRef, unlockSpeechSynthesis]);
 
   const handleToggleSpeechEval = useCallback(() => {
     if (!synthRef.current) return;
 
-    // Unblock mobile browser audio context synchronously in this click handler
+    // Unblock mobile browser audio and speech synthesis synchronously in this click handler
     unlockAudioRef();
+    unlockSpeechSynthesis();
 
     if (isSpeakingEval) {
       synthRef.current.cancel();
@@ -298,7 +279,7 @@ export default function SleepScreening({
         hasStopBangIssue = true;
       }
       if (stopBangAnswers[2] === 1) {
-        evalText += "มีผู้พบเจอสะดุ้งตัวสลึมตื่นสำลักอากาศกลางดึก เป็นสัญญาณบอกเหตุ of ภาวะหยุดหายใจที่อันตรายสูงสุดสะสม แนะนำรีบติดต่อศูนย์โรคการนอนหลับเพื่อตรวจคัดกรอง สลีปเทสต์ หรือติดต่อแพทย์เฉพาะทาง อย่าละเลยเด็ดขาดค่ะ ";
+        evalText += "มีผู้พบเจอสะดุ้งตัวสลึมตื่นสำลักอากาศกลางดึก เป็นสัญญาณบอกเหตุ ภาวะหยุดหายใจที่อันตรายสูงสุดสะสม แนะนำรีบติดต่อศูนย์โรคการนอนหลับเพื่อตรวจคัดกรอง สลีปเทสต์ หรือติดต่อแพทย์เฉพาะทาง อย่าละเลยเด็ดขาดค่ะ ";
         hasStopBangIssue = true;
       }
       if (stopBangAnswers[3] === 1) {
@@ -313,51 +294,39 @@ export default function SleepScreening({
         evalText += "สภาพแนวทางลมหายใจหลอดลมสะดวกโยธินปลอดโปร่งปลอดภัยค่ะ ";
       }
 
-      const chunks = splitTextIntoSentences(evalText);
-      if (chunks.length === 0) return;
-
       setIsSpeakingEval(true);
 
-      const utterances: SpeechSynthesisUtterance[] = [];
-      activeUtterancesRef.current = [];
+      // Play consolidated utterance after short delay allowing potential cancel to clear from queue
+      setTimeout(() => {
+        if (!synthRef.current) return;
 
-      chunks.forEach((chunkText, index) => {
-        const u = new SpeechSynthesisUtterance(chunkText);
+        const u = new SpeechSynthesisUtterance(evalText);
         u.lang = 'th-TH';
         u.rate = 1.05;
 
-        const voices = synthRef.current?.getVoices() || [];
+        const voices = synthRef.current.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        if (index === chunks.length - 1) {
-          u.onend = () => {
-            setIsSpeakingEval(false);
-            activeUtterancesRef.current = [];
-          };
-        }
+        u.onend = () => {
+          setIsSpeakingEval(false);
+          activeUtterancesRef.current = [];
+        };
 
         u.onerror = (e) => {
           console.error("Speech eval chunk instruction error:", e);
-          if (e.error !== 'interrupted') {
-            setIsSpeakingEval(false);
-            activeUtterancesRef.current = [];
-          }
+          setIsSpeakingEval(false);
+          activeUtterancesRef.current = [];
         };
 
-        utterances.push(u);
-      });
-
-      activeUtterancesRef.current = utterances;
-
-      // Queue all utterances synchronously within user-trigger block to completely satisfy mobile security model
-      utterances.forEach(u => {
-        synthRef.current?.speak(u);
-      });
+        activeUtterancesRef.current = [u];
+        synthRef.current.speak(u);
+      }, 100);
     }
-  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
+  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, unlockAudioRef, unlockSpeechSynthesis]);
+
 
   const totalIsi = useMemo(() => isiAnswers.reduce((s, v) => s + v, 0), [isiAnswers]);
   const totalEss = useMemo(() => essAnswers.reduce((s, v) => s + v, 0), [essAnswers]);
