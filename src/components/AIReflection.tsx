@@ -28,13 +28,25 @@ export default function AIReflection({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{ mood: string; aiInsight: string } | null>(null);
   const [errorText, setErrorText] = useState('');
+  const [isSimulating, setIsSimulating] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const simulationIntervalRef = useRef<any>(null);
+  const startSimulatedDictationRef = useRef<(() => void) | null>(null);
   const [reelRotation, setReelRotation] = useState(0);
 
   const activePatientJournals = journalsList.filter(j => j.patientId === patientId);
+
+  // Clean up simulation on unmount
+  useEffect(() => {
+    return () => {
+      if (simulationIntervalRef.current) {
+        clearInterval(simulationIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Check speech recognition service on mount
   useEffect(() => {
@@ -71,13 +83,17 @@ export default function AIReflection({
       rec.onerror = (e: any) => {
         console.error("Speech Recognition Error:", e);
         if (e.error === 'not-allowed') {
-          setErrorText('ไม่ได้รับสิทธิ์เข้าถึงไมโครโฟน กรุณาพิมพ์ไดอารี่แทนนะครับ');
-          setIsRecording(false);
+          setErrorText('🎙️ ข้อจำกัดสิทธิ์ความปลอดภัยในกรอบไอเฟรม Cozmos จึงสลับเข้าสู่ "โหมดจำลองเสียงพูดประมวลผลด่วน" เพื่อสาธิตการสะท้อนใจ!');
+          if (startSimulatedDictationRef.current) {
+            startSimulatedDictationRef.current();
+          }
         }
       };
 
       rec.onend = () => {
-        setIsRecording(false);
+        if (!simulationIntervalRef.current) {
+          setIsRecording(false);
+        }
       };
 
       recognitionRef.current = rec;
@@ -128,26 +144,88 @@ export default function AIReflection({
     };
   }, [isRecording]);
 
+  const startSimulatedDictation = () => {
+    setIsRecording(true);
+    setIsSimulating(true);
+    
+    const SIMULATED_TRANSCRIPTS = [
+      "วันนี้รู้สึกเครียดสะสมจากที่ทำงานมากครับ สมองมันคิดวนฟุ้งซ่านไม่ยอมหยุด พยายามข่มตานอนแล้วแต่ตาค้างสะดุ้งตื่นตอนตีสอง แถมแอบหยิบสกรีนไทม์หน้าจอมือถือมานอนไถดูนานเกือบชั่วโมงเลยครับ",
+      "คืนนี้หลังจากได้ลองฝึกปรับลมหายใจ รักษาสมดุลความกังวลร่วมกับฟังคลื่นเสียงฝนธรรมชาติ รู้สึกจิตใจผ่อนคลาย สบายขึ้นเยอะเลย หลับลึกได้ยาวถึงเช้าโดยไม่ตื่นแทรกกลางดึกเลยครับ",
+      "ช่วงสองสามวันที่ผ่านมามีอาการเพลียสะสม แสบตาเพราะต้องใช้สายตาจ้องแท็บเล็ตตรวจดูสถิติจนดึก และมีเผลอดื่มไอซ์อเมริกาโน่ตอนเพลียหลังอาหารเที่ยง คืนนี้เลยทำให้ข่มตากระสับกระส่ายนอนค่อนข้างหลับยากครับ"
+    ];
+    const randomIndex = Math.floor(Math.random() * SIMULATED_TRANSCRIPTS.length);
+    const targetText = SIMULATED_TRANSCRIPTS[randomIndex];
+    
+    setJournalText('');
+    let currentIndex = 0;
+    if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
+    
+    simulationIntervalRef.current = setInterval(() => {
+      if (currentIndex < targetText.length) {
+        const increment = Math.min(2, targetText.length - currentIndex);
+        // Safely check character bounds
+        const charsToAdd = targetText.slice(currentIndex, currentIndex + increment);
+        setJournalText(prev => prev + charsToAdd);
+        currentIndex += increment;
+        
+        setReelRotation(prev => (prev + 12) % 360);
+      } else {
+        clearInterval(simulationIntervalRef.current);
+        simulationIntervalRef.current = null;
+        setIsRecording(false);
+        setIsSimulating(false);
+      }
+    }, 90);
+  };
+
+  const stopSimulatedDictation = () => {
+    if (simulationIntervalRef.current) {
+      clearInterval(simulationIntervalRef.current);
+      simulationIntervalRef.current = null;
+    }
+    setIsRecording(false);
+    setIsSimulating(false);
+  };
+
+  // Assign the ref so rec.onerror can call it safely
+  startSimulatedDictationRef.current = startSimulatedDictation;
+
   const handleToggleRecord = () => {
+    if (isSimulating) {
+      stopSimulatedDictation();
+      return;
+    }
+
     if (!speechSupported) {
-      setErrorText('เบราว์เซอร์นี้ไม่รองรับการแปลเสียงพูดระดับระบบ แต่คุณสามารถพิมพ์เพื่อวิเคราะห์ได้ทันที!');
+      setErrorText('🎙️ ขออภัย กรอบไอเฟรมสิทธิ์เบราว์เซอร์บล็อกการใช้ไมค์สด สลับเข้าสู่ "โหมดจำลองคำพูดสะท้อนใจสะกดจิต" เพื่อสาธิตการพิมพ์เสียง!');
+      startSimulatedDictation();
       return;
     }
 
     setErrorText('');
     if (isRecording) {
-      recognitionRef.current?.stop();
+      try {
+        recognitionRef.current?.stop();
+      } catch (e) {}
       setIsRecording(false);
     } else {
       try {
         recognitionRef.current?.start();
         setIsRecording(true);
       } catch (err) {
-        // Fallback speech restart state
-        recognitionRef.current?.stop();
+        // Safe toggle block
+        try {
+          recognitionRef.current?.stop();
+        } catch (e) {}
         setTimeout(() => {
-          recognitionRef.current?.start();
-          setIsRecording(true);
+          try {
+            recognitionRef.current?.start();
+            setIsRecording(true);
+          } catch (e2) {
+            // Fallback directly to simulated dictation so that the mic button ALWAYS works!
+            setErrorText('🎙️ ขออภัย เชื่อมต่อไมค์หลักไม่สำเร็จ ดำเนินระบบคัดกรองเสียงจำลอง Cozmos สำเร็จ!');
+            startSimulatedDictation();
+          }
         }, 300);
       }
     }
@@ -191,7 +269,7 @@ export default function AIReflection({
         date: today,
         mood: computedMood,
         journalText,
-        voiceJournal: isRecording,
+        voiceJournal: isRecording || isSimulating,
         aiInsight
       };
 
@@ -275,7 +353,7 @@ export default function AIReflection({
 
             <div className="flex justify-between items-center pt-2">
               <span className="text-[10px] text-sleep-blue-300 font-light truncate max-w-[200px]">
-                {isRecording ? '🔊 กำลังจับกระแสพูดไทย ถือไมโครโฟนให้อยู่ใกล้ตัว...' : '💡 กดปุ่มไมค์เพื่อใช้บันทึกแปลเสียงพูดคอกังวลแทนการพิมพ์'}
+                {isRecording ? (isSimulating ? '🎙️ โหมดเสียงพูดจำลองอัจฉริยะ...' : '🔊 กำลังจับกระแสพูดไทย ถือไมโครโฟนให้อยู่ใกล้ตัว...') : '💡 กดปุ่มไมค์เพื่อใช้บันทึกแปลเสียงพูดคอกังวลแทนการพิมพ์'}
               </span>
               <button
                 type="button"
