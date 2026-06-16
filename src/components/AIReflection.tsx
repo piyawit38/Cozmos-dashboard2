@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Journal, DailyFactors } from '../types';
-import { Mic, MicOff, Brain, Sparkles, Send, Calendar, Check, MessageSquare, AlertCircle, RefreshCw, Compass } from 'lucide-react';
+import { Mic, Brain, Sparkles, Send, Calendar, MessageSquare, AlertCircle, Compass, Square } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AIReflectionProps {
@@ -28,25 +28,14 @@ export default function AIReflection({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{ mood: string; aiInsight: string } | null>(null);
   const [errorText, setErrorText] = useState('');
-  const [isSimulating, setIsSimulating] = useState(false);
+  const [usedVoice, setUsedVoice] = useState(false);
 
   const recognitionRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const simulationIntervalRef = useRef<any>(null);
-  const startSimulatedDictationRef = useRef<(() => void) | null>(null);
   const [reelRotation, setReelRotation] = useState(0);
 
   const activePatientJournals = journalsList.filter(j => j.patientId === patientId);
-
-  // Clean up simulation on unmount
-  useEffect(() => {
-    return () => {
-      if (simulationIntervalRef.current) {
-        clearInterval(simulationIntervalRef.current);
-      }
-    };
-  }, []);
 
   // Check speech recognition service on mount
   useEffect(() => {
@@ -57,6 +46,11 @@ export default function AIReflection({
       rec.continuous = true;
       rec.interimResults = true;
       rec.lang = 'th-TH'; // Primary Thai language config
+
+      rec.onstart = () => {
+        setIsRecording(true);
+        setErrorText('');
+      };
 
       rec.onresult = (event: any) => {
         let interimTranscript = '';
@@ -70,30 +64,38 @@ export default function AIReflection({
           }
         }
 
-        const fullTranscription = (finalTranscript || interimTranscript);
-        if (fullTranscription) {
+        if (finalTranscript) {
+          setUsedVoice(true);
           setJournalText((prev) => {
-            // Deduplicate slightly or append
-            if (prev.endsWith(fullTranscription)) return prev;
-            return prev ? `${prev} ${fullTranscription}` : fullTranscription;
+            const trimmedPrev = prev.trim();
+            const trimmedFinal = finalTranscript.trim();
+            if (trimmedPrev.endsWith(trimmedFinal)) return prev;
+            return trimmedPrev ? `${trimmedPrev} ${trimmedFinal}` : trimmedFinal;
           });
+        }
+
+        if (interimTranscript) {
+          setTranscript(interimTranscript);
+        } else {
+          setTranscript('');
         }
       };
 
       rec.onerror = (e: any) => {
         console.error("Speech Recognition Error:", e);
         if (e.error === 'not-allowed') {
-          setErrorText('🎙️ ข้อจำกัดสิทธิ์ความปลอดภัยในกรอบไอเฟรม Cozmos จึงสลับเข้าสู่ "โหมดจำลองเสียงพูดประมวลผลด่วน" เพื่อสาธิตการสะท้อนใจ!');
-          if (startSimulatedDictationRef.current) {
-            startSimulatedDictationRef.current();
-          }
+          setErrorText('🎙️ ไม่สามารถเข้าถึงไมโครโฟนได้: กรุณาคลิกไอคอนแม่กุญแจ 🔒 ที่แถบพิมพ์ลิงก์เว็บด้านบน แล้วปรับสิทธิ์ "ไมโครโฟน (Microphone)" ให้เป็น "อนุญาต (Allow)" จากนั้นพิมพ์หรือบันทึกใหม่อีกครั้งครับ');
+        } else if (e.error === 'no-speech') {
+          console.warn("Speech Recognition Warning: no-speech detected.");
+        } else {
+          setErrorText(`🎙️ ข้อผิดพลาดไมโครโฟน (${e.error || 'กรุณาตรวจสอบการตั้งค่า'}): กรุณาลองตรวจสอบสิทธิ์หรือเปิดใช้งานเว็บบนเบราว์เซอร์ Google Chrome เพื่อผลลัพธ์ที่ดีที่สุด`);
         }
+        setIsRecording(false);
       };
 
       rec.onend = () => {
-        if (!simulationIntervalRef.current) {
-          setIsRecording(false);
-        }
+        setIsRecording(false);
+        setTranscript('');
       };
 
       recognitionRef.current = rec;
@@ -144,89 +146,25 @@ export default function AIReflection({
     };
   }, [isRecording]);
 
-  const startSimulatedDictation = () => {
-    setIsRecording(true);
-    setIsSimulating(true);
-    
-    const SIMULATED_TRANSCRIPTS = [
-      "วันนี้รู้สึกเครียดสะสมจากที่ทำงานมากครับ สมองมันคิดวนฟุ้งซ่านไม่ยอมหยุด พยายามข่มตานอนแล้วแต่ตาค้างสะดุ้งตื่นตอนตีสอง แถมแอบหยิบสกรีนไทม์หน้าจอมือถือมานอนไถดูนานเกือบชั่วโมงเลยครับ",
-      "คืนนี้หลังจากได้ลองฝึกปรับลมหายใจ รักษาสมดุลความกังวลร่วมกับฟังคลื่นเสียงฝนธรรมชาติ รู้สึกจิตใจผ่อนคลาย สบายขึ้นเยอะเลย หลับลึกได้ยาวถึงเช้าโดยไม่ตื่นแทรกกลางดึกเลยครับ",
-      "ช่วงสองสามวันที่ผ่านมามีอาการเพลียสะสม แสบตาเพราะต้องใช้สายตาจ้องแท็บเล็ตตรวจดูสถิติจนดึก และมีเผลอดื่มไอซ์อเมริกาโน่ตอนเพลียหลังอาหารเที่ยง คืนนี้เลยทำให้ข่มตากระสับกระส่ายนอนค่อนข้างหลับยากครับ"
-    ];
-    const randomIndex = Math.floor(Math.random() * SIMULATED_TRANSCRIPTS.length);
-    const targetText = SIMULATED_TRANSCRIPTS[randomIndex];
-    
-    setJournalText('');
-    let currentIndex = 0;
-    if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
-    
-    simulationIntervalRef.current = setInterval(() => {
-      if (currentIndex < targetText.length) {
-        const increment = Math.min(2, targetText.length - currentIndex);
-        // Safely check character bounds
-        const charsToAdd = targetText.slice(currentIndex, currentIndex + increment);
-        setJournalText(prev => prev + charsToAdd);
-        currentIndex += increment;
-        
-        setReelRotation(prev => (prev + 12) % 360);
-      } else {
-        clearInterval(simulationIntervalRef.current);
-        simulationIntervalRef.current = null;
-        setIsRecording(false);
-        setIsSimulating(false);
-      }
-    }, 90);
-  };
-
-  const stopSimulatedDictation = () => {
-    if (simulationIntervalRef.current) {
-      clearInterval(simulationIntervalRef.current);
-      simulationIntervalRef.current = null;
-    }
-    setIsRecording(false);
-    setIsSimulating(false);
-  };
-
-  // Assign the ref so rec.onerror can call it safely
-  startSimulatedDictationRef.current = startSimulatedDictation;
-
   const handleToggleRecord = () => {
-    if (isSimulating) {
-      stopSimulatedDictation();
-      return;
-    }
-
-    if (!speechSupported) {
-      setErrorText('🎙️ ขออภัย กรอบไอเฟรมสิทธิ์เบราว์เซอร์บล็อกการใช้ไมค์สด สลับเข้าสู่ "โหมดจำลองคำพูดสะท้อนใจสะกดจิต" เพื่อสาธิตการพิมพ์เสียง!');
-      startSimulatedDictation();
+    if (!speechSupported || !recognitionRef.current) {
+      setErrorText('🎙️ ขออภัย อุปกรณ์หรือเว็บบนเบราว์เซอร์นี้ไม่รองรับการแปลเสียงพูดเป็นตัวอักษรไทย กรุณาใช้การพิมพ์ข้อความด้านล่างแทนนะครับ');
       return;
     }
 
     setErrorText('');
     if (isRecording) {
       try {
-        recognitionRef.current?.stop();
-      } catch (e) {}
-      setIsRecording(false);
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.error("Failed to stop recognition:", e);
+      }
     } else {
       try {
-        recognitionRef.current?.start();
-        setIsRecording(true);
+        recognitionRef.current.start();
       } catch (err) {
-        // Safe toggle block
-        try {
-          recognitionRef.current?.stop();
-        } catch (e) {}
-        setTimeout(() => {
-          try {
-            recognitionRef.current?.start();
-            setIsRecording(true);
-          } catch (e2) {
-            // Fallback directly to simulated dictation so that the mic button ALWAYS works!
-            setErrorText('🎙️ ขออภัย เชื่อมต่อไมค์หลักไม่สำเร็จ ดำเนินระบบคัดกรองเสียงจำลอง Cozmos สำเร็จ!');
-            startSimulatedDictation();
-          }
-        }, 300);
+        console.error("Failed to start recognition:", err);
+        setErrorText('🎙️ ไม่สามารถเริ่มใช้งานไมโครโฟนได้ในขณะนี้ กรุณาเปิดสิทธิ์ไมโครโฟนของคุณก่อนทดลองใหม่อีกครั้ง');
       }
     }
   };
@@ -269,13 +207,14 @@ export default function AIReflection({
         date: today,
         mood: computedMood,
         journalText,
-        voiceJournal: isRecording || isSimulating,
+        voiceJournal: usedVoice || isRecording,
         aiInsight
       };
 
       onSaveJournalRecord(payload);
       setAnalysisResult({ mood: computedMood, aiInsight });
       setJournalText('');
+      setUsedVoice(false);
     } catch (err: any) {
       console.error(err);
       setErrorText('เกิดปัญหาทางเครือข่ายวิญญาณ Gemini รบกวนทดลองใหม่อีกครั่ง');
@@ -351,21 +290,27 @@ export default function AIReflection({
               height={32}
             />
 
+            {isRecording && transcript && (
+              <div className="my-2 py-1 px-2.5 bg-sleep-blue-950/60 rounded-xl border border-sleep-blue-800/80 text-[11px] text-sleep-gold-300 font-light text-center animate-pulse max-h-[50px] overflow-y-auto">
+                🎙️ กำลังได้ยิน: <span className="text-white font-serif">"{transcript}"</span>
+              </div>
+            )}
+
             <div className="flex justify-between items-center pt-2">
               <span className="text-[10px] text-sleep-blue-300 font-light truncate max-w-[200px]">
-                {isRecording ? (isSimulating ? '🎙️ โหมดเสียงพูดจำลองอัจฉริยะ...' : '🔊 กำลังจับกระแสพูดไทย ถือไมโครโฟนให้อยู่ใกล้ตัว...') : '💡 กดปุ่มไมค์เพื่อใช้บันทึกแปลเสียงพูดคอกังวลแทนการพิมพ์'}
+                {isRecording ? '🔊 กำลังบันทึกเสียงพูดสด... ถือไมโครโฟนให้อยู่ใกล้ตัว' : '💡 กดปุ่มไมค์เพื่อบันทึกและแปลงเสียงพูดแทนการพิมพ์ได้จริง'}
               </span>
               <button
                 type="button"
                 onClick={handleToggleRecord}
                 className={`p-2.5 rounded-full flex items-center justify-center transition focus:outline-none shrink-0 ${
                   isRecording
-                    ? 'bg-red-500 hover:bg-red-650 text-white shadow-md'
+                    ? 'bg-red-500 hover:bg-red-650 text-white shadow-md animate-pulse'
                     : 'bg-sleep-gold-500 hover:bg-sleep-gold-400 text-[#0B1026]'
                 }`}
                 id="btn-voice-journal"
               >
-                {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                {isRecording ? <Square className="w-4 h-4 fill-white text-white" /> : <Mic className="w-4 h-4" />}
               </button>
             </div>
           </div>
