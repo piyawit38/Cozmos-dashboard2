@@ -87,7 +87,7 @@ export default function SleepScreening({
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [isSpeakingEval, setIsSpeakingEval] = useState<boolean>(false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const activeUtterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -100,15 +100,46 @@ export default function SleepScreening({
     };
   }, []);
 
+  const splitTextIntoSentences = useCallback((text: string): string[] => {
+    const parts = text.split(/[\n,。．\.。、\s]+/);
+    const chunks: string[] = [];
+    let currentChunk = "";
+    
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      
+      if (currentChunk.length + trimmed.length > 120) {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = trimmed;
+      } else {
+        currentChunk = currentChunk ? currentChunk + " " + trimmed : trimmed;
+      }
+    }
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+    return chunks;
+  }, []);
+
   const handleToggleSpeech = useCallback(() => {
     if (!synthRef.current) return;
 
     if (isSpeaking) {
       synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
       setIsSpeaking(false);
+      activeUtterancesRef.current = [];
     } else {
       if (isSpeakingEval) {
         synthRef.current.cancel();
+        if (synthRef.current.paused) {
+          synthRef.current.resume();
+        }
         setIsSpeakingEval(false);
       }
 
@@ -121,32 +152,62 @@ export default function SleepScreening({
         .replace(/✨/g, '')
         .replace(/:/g, ' ');
 
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.lang = 'th-TH';
-      utterance.rate = 1.0;
+      const chunks = splitTextIntoSentences(cleanText);
+      const utterances: SpeechSynthesisUtterance[] = [];
 
-      utterance.onend = () => {
-        setIsSpeaking(false);
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-      };
-
-      utteranceRef.current = utterance;
       setIsSpeaking(true);
-      synthRef.current.speak(utterance);
+
+      chunks.forEach((chunk, index) => {
+        const u = new SpeechSynthesisUtterance(chunk);
+        u.lang = 'th-TH';
+        u.rate = 1.0;
+
+        const voices = synthRef.current?.getVoices() || [];
+        const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
+        if (thVoice) {
+          u.voice = thVoice;
+        }
+
+        if (index === chunks.length - 1) {
+          u.onend = () => {
+            setIsSpeaking(false);
+            activeUtterancesRef.current = [];
+          };
+        }
+        u.onerror = (e) => {
+          console.error("Speech error:", e);
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+        };
+        utterances.push(u);
+      });
+
+      activeUtterancesRef.current = utterances;
+
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
+
+      utterances.forEach(u => synthRef.current?.speak(u));
     }
-  }, [aiAdvice, isSpeaking, isSpeakingEval]);
+  }, [aiAdvice, isSpeaking, isSpeakingEval, splitTextIntoSentences]);
 
   const handleToggleSpeechEval = useCallback(() => {
     if (!synthRef.current) return;
 
     if (isSpeakingEval) {
       synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
       setIsSpeakingEval(false);
+      activeUtterancesRef.current = [];
     } else {
       if (isSpeaking) {
         synthRef.current.cancel();
+        if (synthRef.current.paused) {
+          synthRef.current.resume();
+        }
         setIsSpeaking(false);
       }
 
@@ -207,22 +268,45 @@ export default function SleepScreening({
         evalText += "สภาพแนวทางลมหายใจหลอดลมสะดวกโยธินปลอดโปร่งปลอดภัยค่ะ ";
       }
 
-      const utterance = new SpeechSynthesisUtterance(evalText);
-      utterance.lang = 'th-TH';
-      utterance.rate = 1.05;
+      const chunks = splitTextIntoSentences(evalText);
+      const utterances: SpeechSynthesisUtterance[] = [];
 
-      utterance.onend = () => {
-        setIsSpeakingEval(false);
-      };
-      utterance.onerror = () => {
-        setIsSpeakingEval(false);
-      };
-
-      utteranceRef.current = utterance;
       setIsSpeakingEval(true);
-      synthRef.current.speak(utterance);
+
+      chunks.forEach((chunk, index) => {
+        const u = new SpeechSynthesisUtterance(chunk);
+        u.lang = 'th-TH';
+        u.rate = 1.05;
+
+        const voices = synthRef.current?.getVoices() || [];
+        const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
+        if (thVoice) {
+          u.voice = thVoice;
+        }
+
+        if (index === chunks.length - 1) {
+          u.onend = () => {
+            setIsSpeakingEval(false);
+            activeUtterancesRef.current = [];
+          };
+        }
+        u.onerror = (e) => {
+          console.error("Speech eval error:", e);
+          setIsSpeakingEval(false);
+          activeUtterancesRef.current = [];
+        };
+        utterances.push(u);
+      });
+
+      activeUtterancesRef.current = utterances;
+
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
+
+      utterances.forEach(u => synthRef.current?.speak(u));
     }
-  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval]);
+  }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, splitTextIntoSentences]);
 
   const totalIsi = useMemo(() => isiAnswers.reduce((s, v) => s + v, 0), [isiAnswers]);
   const totalEss = useMemo(() => essAnswers.reduce((s, v) => s + v, 0), [essAnswers]);
@@ -655,10 +739,15 @@ export default function SleepScreening({
       {/* บทประเมินพฤติกรรมแยกรายข้ออย่างละเอียดสำหรับใช้ทางบ้าน */}
       <div className="bg-white rounded-3xl p-6 shadow border border-sleep-blue-100/60">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b border-gray-50 pb-3">
-          <h4 className="font-semibold text-lg text-sleep-blue-900 flex items-center gap-2">
-            <Moon className="w-5 h-5 text-sleep-gold-500" />
-            บทประเมินพฤติกรรมรายข้อสำหรับบ้าน (Tailored Clinical Evaluation)
-          </h4>
+          <div>
+            <h4 className="font-semibold text-lg text-sleep-blue-900 flex items-center gap-2">
+              <Moon className="w-5 h-5 text-sleep-gold-500" />
+              บทประเมินพฤติกรรมรายข้อสำหรับบ้าน (Tailored Clinical Evaluation)
+            </h4>
+            <p className="text-[10px] text-amber-600 mt-1 font-normal leading-normal">
+              ℹ️ หากเสียงเงียบใน iPhone/iPad กรุณาเปิดสวิตช์เปิดเสียง (Ring switch) ด้านข้างเครื่อง และเปิดเสียงมีเดียขึ้นด้วยนะคะ
+            </p>
+          </div>
           <button
             onClick={handleToggleSpeechEval}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold analytics-btn transition shadow-sm select-none ${
@@ -804,10 +893,15 @@ export default function SleepScreening({
         {aiAdvice && (
           <div className="mt-4 p-4 bg-sleep-blue-50/80 rounded-xl border border-sleep-blue-100 md:p-5">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-sleep-blue-100/50 p-3 rounded-xl border border-sleep-blue-100/80 gap-2 mb-4">
-              <span className="text-xs text-sleep-blue-900 font-medium flex items-center gap-1.5 leading-normal">
-                <Sparkles className="w-3.5 h-3.5 text-sleep-gold-500 animate-pulse flex-shrink-0" />
-                มีเสียงโค้ช AI คอสมอสคอยอ่านภาษาไทยวิจัยเรื่องการนอนให้คุณฟัง:
-              </span>
+              <div className="flex flex-col">
+                <span className="text-xs text-sleep-blue-900 font-medium flex items-center gap-1.5 leading-normal">
+                  <Sparkles className="w-3.5 h-3.5 text-sleep-gold-500 animate-pulse flex-shrink-0" />
+                  มีเสียงโค้ช AI คอสมอสคอยอ่านภาษาไทยวิจัยเรื่องการนอนให้คุณฟัง:
+                </span>
+                <span className="text-[10px] text-amber-600 mt-1 font-normal leading-normal">
+                  ℹ️ ผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างเครื่อง (ปิดโหมดสั่น/ดึงแถบปิดเสียงขึ้น) และเพิ่มเสียงมีเดียด้วยนะคะ
+                </span>
+              </div>
               <button
                 onClick={handleToggleSpeech}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow-sm select-none ${
