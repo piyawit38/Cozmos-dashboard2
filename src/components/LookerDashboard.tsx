@@ -13,8 +13,6 @@ import {
 import { 
   LayoutGrid, Heart, Sparkles, AlertCircle, RefreshCw, Compass, Volume2, VolumeX 
 } from 'lucide-react';
-// ถอด motion ออกชั่วคราวเพื่อทดสอบ
-// import { motion } from 'motion/react';
 
 interface LookerDashboardProps {
   database: DatabaseState;
@@ -22,7 +20,7 @@ interface LookerDashboardProps {
   onUpdateDatabase?: (updatedDb: DatabaseState) => void;
 }
 
-// Helper: get patient display name
+// Helper
 const getPatientName = (users: User[], patientId: string): string => {
   const user = users.find(u => u.patientId === patientId);
   if (!user) return patientId;
@@ -32,13 +30,33 @@ const getPatientName = (users: User[], patientId: string): string => {
   return user.fullName || user.patientId;
 };
 
-// Type for API response
 interface GeminiReportResponse {
   report?: string;
   error?: string;
 }
 
-// ----- Component ย่อยสำหรับ Page 1 (เพื่อลด Complexity) -----
+// ---- Component แยกสำหรับ Wave Animation (ไม่ต้อง Re-render) ----
+const WaveAnimation = React.memo(() => {
+  const heights = [1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2];
+  return (
+    <div className="flex items-center gap-1 justify-end">
+      {heights.map((h, i) => (
+        <div
+          key={`wave-${i}`}
+          className="w-0.5 bg-sleep-gold-500 rounded-full animate-bounce"
+          style={{
+            height: `${h * 3}px`,
+            animationDelay: `${i * 0.1}s`,
+            animationDuration: '0.8s'
+          }}
+        />
+      ))}
+    </div>
+  );
+});
+WaveAnimation.displayName = 'WaveAnimation';
+
+// ---- Component สำหรับ Page 1 (ใช้ React.memo) ----
 interface Page1Props {
   database: DatabaseState;
   activePatientId: string;
@@ -56,12 +74,14 @@ const Page1Content = React.memo(({
   database, activePatientId, totalUsers, avgIsi, avgEss, avgEfficiency, avgStress,
   patientAssessments, patientDiaries, onUpdateDatabase
 }: Page1Props) => {
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isSpeakingUI, setIsSpeakingUI] = useState(false);
+  const isSpeakingRef = useRef(false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const activeUtterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
   const [voicesLoaded, setVoicesLoaded] = useState(false);
+  const isMounted = useRef(true);
 
-  // โหลด Speech Synthesis
+  // Load Speech Synthesis
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
     synthRef.current = window.speechSynthesis;
@@ -71,16 +91,18 @@ const Page1Content = React.memo(({
     synthRef.current.addEventListener('voiceschanged', checkVoices);
     checkVoices();
     return () => {
+      isMounted.current = false;
       synthRef.current?.removeEventListener('voiceschanged', checkVoices);
       synthRef.current?.cancel();
     };
   }, []);
 
-  // หยุดพูดเมื่อเปลี่ยนผู้ป่วย
+  // หยุดพูดเมื่อเปลี่ยน activePatientId
   useEffect(() => {
     if (synthRef.current) {
       synthRef.current.cancel();
-      setIsSpeaking(false);
+      isSpeakingRef.current = false;
+      if (isMounted.current) setIsSpeakingUI(false);
       activeUtterancesRef.current = [];
     }
   }, [activePatientId]);
@@ -89,7 +111,7 @@ const Page1Content = React.memo(({
   const latestAss = patientAssessments[patientAssessments.length - 1];
   const latestDiary = patientDiaries[patientDiaries.length - 1];
 
-  // คำนวณคำแนะนำ CBT-I (ใช้ useMemo เพื่อไม่คำนวณทุกครั้ง)
+  // คำนวณคำแนะนำ (useMemo)
   const cbtiRecommendations = useMemo(() => {
     const recs = [];
     const eff = latestDiary ? latestDiary.sleepEfficiency : avgEfficiency;
@@ -158,14 +180,13 @@ const Page1Content = React.memo(({
     return recs;
   }, [latestDiary, latestAss, avgEfficiency, avgIsi, avgStress]);
 
-  // สร้างสคริปต์เสียง (Memoized)
   const fullSpeechScript = useMemo(() => {
     return `สวัสดีครับคุณ${patientName} ผมคือโค้ชส่วนตัวคอสมอสที่จะพาคุณมาเปลี่ยนความคิดและพฤติกรรมการนอนแบบยั่งยืนด้วยหลัก ซีบีทีไอ ครับ. จากการวิเคราะห์รอบล่าสุดเฉพาะตัวคุณ มีคำแนะแนว 3 ขั้นตอนสำคัญดังนี้ครับ. ` +
       cbtiRecommendations.map((r) => `${r.step}: ${r.title}. รายละเอียดแนะแนวคือ ${r.detail}. `).join(" ") +
       ` ขอให้คุณ${patientName}ค่อยๆปรับตัวทีละนิดและรักษาวินัยอย่างใจเย็นนะครับ คอสมอสขอเป็นกำลังใจให้ทุกคืนเป็นคืนที่แสนสุขครับ.`;
   }, [patientName, cbtiRecommendations]);
 
-  // ฟังก์ชัน TTS
+  // ฟังก์ชัน TTS (ใช้ useCallback และ refs)
   const handleSpeakTts = useCallback(async () => {
     const synth = synthRef.current;
     if (!synth) {
@@ -173,16 +194,17 @@ const Page1Content = React.memo(({
       return;
     }
 
-    if (isSpeaking) {
+    // ถ้ากำลังพูดอยู่ => หยุด
+    if (isSpeakingRef.current) {
       synth.cancel();
-      setIsSpeaking(false);
+      isSpeakingRef.current = false;
+      if (isMounted.current) setIsSpeakingUI(false);
       activeUtterancesRef.current = [];
       return;
     }
 
     // รอให้ voice โหลด
     if (!voicesLoaded) {
-      // ลองรอ 2 วินาที
       await new Promise<void>((resolve) => {
         const check = () => {
           if (synth.getVoices().length > 0) {
@@ -201,43 +223,102 @@ const Page1Content = React.memo(({
       return;
     }
 
+    // หยุดทุกอย่างที่ค้าง
     synth.cancel();
+    activeUtterancesRef.current = [];
 
+    // แยกข้อความเป็นประโยค
     const chunks = fullSpeechScript.split(/[\n,。．\.。、\s]+/).filter(s => s.trim());
     const utterances: SpeechSynthesisUtterance[] = [];
     const voices = synth.getVoices();
     const thVoice = voices.find(v => v.lang.includes('th'));
 
-    chunks.forEach((chunk, index) => {
+    for (const chunk of chunks) {
       const u = new SpeechSynthesisUtterance(chunk.trim());
       u.lang = 'th-TH';
       u.rate = 1.05;
       if (thVoice) u.voice = thVoice;
-      if (index === chunks.length - 1) {
-        u.onend = () => {
-          setIsSpeaking(false);
-          activeUtterancesRef.current = [];
-        };
-      }
-      u.onerror = () => {
-        setIsSpeaking(false);
+      utterances.push(u);
+    }
+
+    if (utterances.length === 0) return;
+
+    // กำหนด onend สำหรับตัวสุดท้าย
+    utterances[utterances.length - 1].onend = () => {
+      isSpeakingRef.current = false;
+      if (isMounted.current) setIsSpeakingUI(false);
+      activeUtterancesRef.current = [];
+    };
+
+    // กำหนด onerror สำหรับทุกตัว
+    utterances.forEach((u) => {
+      u.onerror = (e) => {
+        console.warn('Speech error:', e);
+        isSpeakingRef.current = false;
+        if (isMounted.current) setIsSpeakingUI(false);
         activeUtterancesRef.current = [];
       };
-      utterances.push(u);
     });
 
     activeUtterancesRef.current = utterances;
-    setIsSpeaking(true);
+    isSpeakingRef.current = true;
+    if (isMounted.current) setIsSpeakingUI(true);
+
+    // พูดทีละตัว (ลำดับ)
     utterances.forEach(u => synth.speak(u));
-  }, [isSpeaking, voicesLoaded, fullSpeechScript]);
+  }, [voicesLoaded, fullSpeechScript]);
+
+  // โหลดข้อมูลตัวอย่าง
+  const handleLoadDemoData = useCallback(() => {
+    const targetId = activePatientId;
+    const demoDiaries: SleepDiary[] = [
+      { patientId: targetId, date: "2026-06-05", bedTime: "23:45", wakeTime: "06:30", sleepDuration: 6, sleepEfficiency: 85, awakenings: 2 },
+      { patientId: targetId, date: "2026-06-06", bedTime: "00:15", wakeTime: "06:00", sleepDuration: 5.2, sleepEfficiency: 79, awakenings: 3 },
+      { patientId: targetId, date: "2026-06-07", bedTime: "01:30", wakeTime: "07:00", sleepDuration: 5, sleepEfficiency: 75, awakenings: 4 },
+      { patientId: targetId, date: "2026-06-08", bedTime: "23:50", wakeTime: "06:30", sleepDuration: 6.2, sleepEfficiency: 87, awakenings: 1 },
+      { patientId: targetId, date: "2026-06-09", bedTime: "01:10", wakeTime: "06:45", sleepDuration: 5.1, sleepEfficiency: 78, awakenings: 3 },
+      { patientId: targetId, date: "2026-06-10", bedTime: "22:30", wakeTime: "06:30", sleepDuration: 7.5, sleepEfficiency: 94, awakenings: 1 },
+    ];
+    const demoFactors: DailyFactors[] = [
+      { patientId: targetId, date: "2026-06-05", stressScore: 7, caffeine: 3, exercise: 0, screenTime: 4.5, napDuration: 0 },
+      { patientId: targetId, date: "2026-06-06", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 5, napDuration: 30 },
+      { patientId: targetId, date: "2026-06-07", stressScore: 9, caffeine: 3, exercise: 0, screenTime: 6, napDuration: 20 },
+      { patientId: targetId, date: "2026-06-08", stressScore: 5, caffeine: 2, exercise: 30, screenTime: 2.5, napDuration: 0 },
+      { patientId: targetId, date: "2026-06-09", stressScore: 8, caffeine: 4, exercise: 0, screenTime: 4.8, napDuration: 40 },
+      { patientId: targetId, date: "2026-06-10", stressScore: 4, caffeine: 1, exercise: 30, screenTime: 2, napDuration: 0 },
+    ];
+    const demoAssessments: Assessment[] = [
+      { patientId: targetId, date: "2026-06-05", isi: 16, ess: 13, stopBang: 4, riskLevel: "ปานกลาง" },
+      { patientId: targetId, date: "2026-06-10", isi: 9, ess: 12, stopBang: 3, riskLevel: "สูง", isiAnswers: [1,1,1,2,2,2,0], essAnswers: [2,2,2,2,0,2,2,0], stopBangAnswers: [1,0,1,0,1,0,0,0] }
+    ];
+    const demoWellness: WellnessUsage[] = [
+      { patientId: targetId, date: "2026-06-05", zodiacType: "ไฟ", whiteNoise: 0, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
+      { patientId: targetId, date: "2026-06-06", zodiacType: "ไฟ", whiteNoise: 15, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 1 },
+      { patientId: targetId, date: "2026-06-07", zodiacType: "ไฟ", whiteNoise: 20, rainSound: 0, oceanSound: 5, forestSound: 0, breathingSession: 2, brainDump: 1 },
+      { patientId: targetId, date: "2026-06-08", zodiacType: "ไฟ", whiteNoise: 0, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 0 },
+      { patientId: targetId, date: "2026-06-09", zodiacType: "ไฟ", whiteNoise: 10, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 1, brainDump: 1 },
+      { patientId: targetId, date: "2026-06-10", zodiacType: "ไฟ", whiteNoise: 1, rainSound: 0, oceanSound: 0, forestSound: 0, breathingSession: 0, brainDump: 0 }
+    ];
+    const demoJournals: Journal[] = [
+      { patientId: targetId, date: "2026-06-05", mood: "Stress", journalText: "วันนี้เครียดเรื่องงานมาก สมองไม่ยอมหยุดคิด พยายามข่มตานอนแล้วก็ตื่นบ่อย", voiceJournal: false, aiInsight: "จากการวิเคราะห์ความเครียดสูงสัมพันธ์กับการจดจ่อความคิด แนะนำให้ระบายความคิด Brain Dump ก่อนนอน" },
+      { patientId: targetId, date: "2026-06-06", mood: "Stress", journalText: "ทำงานด่วนถึงดึก ดื่มกาแฟตอนทุ่มนึง นอนไม่หลับเลย หลับได้แปปเดียวตื่นอีก", voiceJournal: true, aiInsight: "การดื่มคาเฟอีนหลังบ่ายสองส่งผลต่อระยะเวลาและการเข้าสู่ช่วงหลับลึกอย่างเห็นได้ชัด" },
+      { patientId: targetId, date: "2026-06-07", mood: "Sad", journalText: "รู้สึกเหนื่อยล้าสะสมจากหลายวันที่นอนน้อย สุขภาพเริ่มแย่ลง มีตื่นกลางดึกบ่อยมาก", voiceJournal: false, aiInsight: "สภาวะอารมณ์ดิ่งอาจเชื่อมโยงกับการอดนอนสะสม หลีกเลี่ยงการดูหน้าจอสมาร์ทโฟนก่อนนอน" },
+      { patientId: targetId, date: "2026-06-08", mood: "Neutral", journalText: "หลังจากไปเตะบอลและลดการจับมือถือ รู้สึกนอนได้ลึกขึ้น ตื่นน้อยลงนิดนึง ดีกว่าวันก่อนๆ", voiceJournal: false, aiInsight: "การออกกำลังกายช่วยผ่อนคลายกล้ามเนื้อและลดความเครียดสะสมได้อย่างยอดเยี่ยม" },
+      { patientId: targetId, date: "2026-06-09", mood: "Stress", journalText: "นอนไม่หลับอีกแล้ว เครียดเรื่องประชุมสัปดาห์หน้า เล่นทวิตเตอร์ในที่มืดนานเกินไป", voiceJournal: true, aiInsight: "Screen time ในที่มืดลดการผลิตสารเมลาโทนิน แนะนำให้งดใช้อุปกรณ์ก่อนนอน 1 ชั่วโมง" }
+    ];
+
+    const nextDb = {
+      ...database,
+      sleepDiary: [...database.sleepDiary.filter(d => d.patientId !== targetId), ...demoDiaries],
+      dailyFactors: [...database.dailyFactors.filter(f => f.patientId !== targetId), ...demoFactors],
+      assessments: [...database.assessments.filter(a => a.patientId !== targetId), ...demoAssessments],
+      wellnessUsage: [...database.wellnessUsage.filter(w => w.patientId !== targetId), ...demoWellness],
+      journals: [...database.journals.filter(j => j.patientId !== targetId), ...demoJournals],
+    };
+    if (onUpdateDatabase) onUpdateDatabase(nextDb);
+  }, [activePatientId, database, onUpdateDatabase]);
 
   const hasLogData = patientAssessments.length > 0 || patientDiaries.length > 0;
-
-  // ฟังก์ชันโหลด Demo Data
-  const handleLoadDemoData = () => {
-    // ... (เหมือนเดิม)
-    // ผมจะไม่เขียนซ้ำ แต่ให้ใช้จาก component แม่ หรือจะเขียนใหม่ก็ได้
-  };
 
   return (
     <div className="space-y-6">
@@ -249,12 +330,12 @@ const Page1Content = React.memo(({
         <button
           onClick={handleSpeakTts}
           className={`px-4 py-2 rounded-2xl text-xs font-bold transition flex items-center gap-2 shadow-sm shrink-0 uppercase tracking-wider ${
-            isSpeaking 
+            isSpeakingUI 
               ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
               : 'bg-sleep-blue-900 hover:bg-sleep-blue-800 text-white'
           }`}
         >
-          {isSpeaking ? (
+          {isSpeakingUI ? (
             <>
               <VolumeX className="w-4 h-4 text-white" />
               หยุดโค้ชเสียงบรรยาย
@@ -268,7 +349,7 @@ const Page1Content = React.memo(({
         </button>
       </div>
 
-      {isSpeaking && (
+      {isSpeakingUI && (
         <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in space-y-2 sm:space-y-0">
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
@@ -281,23 +362,10 @@ const Page1Content = React.memo(({
               ℹ️ สำหรับผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างโทรศัพท์ (ดึงแถบปิดเสียงขึ้น) และเพิ่มระดับเสียงขึ้นด้วยนะคะ
             </span>
           </div>
-          <div className="flex items-center gap-1 justify-end">
-            {[1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2].map((height, i) => (
-              <div
-                key={`wave-${i}`}
-                className="w-0.5 bg-sleep-gold-500 rounded-full animate-bounce"
-                style={{
-                  height: `${height * 3}px`,
-                  animationDelay: `${i * 0.1}s`,
-                  animationDuration: '0.8s'
-                }}
-              />
-            ))}
-          </div>
+          <WaveAnimation />
         </div>
       )}
 
-      {/* Onboarding Banner */}
       {!hasLogData && (
         <div className="bg-gradient-to-r from-sleep-gold-500/10 to-transparent border-2 border-dashed border-sleep-gold-400/60 p-5 rounded-3xl space-y-3 shadow-sm">
           <h5 className="font-bold text-sm text-sleep-blue-900 flex items-center gap-2">
@@ -305,7 +373,7 @@ const Page1Content = React.memo(({
             💡 ยังไม่มีข้อมูลระเบียนสุขภาพสำหรับคุณ {patientName}
           </h5>
           <p className="text-xs text-sleep-blue-700 leading-relaxed max-w-4xl">
-            ... (ข้อความเดิม)
+            เนื่องจากคุณยังไม่มีระเบียบบันทึกสุขภาพ คะแนน สถิติความง่วงนอน ดัชนีนอนไม่หลับ (ISI) และประสิทธิภาพการนอนหลับจึงคํานวณหาค่าเฉลี่ยเป็นศูนย์ (0) ทั้งหมดครับ. ระบบยินดีรองรับการคัดกรองส่วนตัวของคุณ โดยคุณสามารถทำประเมินจริง หรือ <strong className="text-sleep-blue-950 font-extrabold">กดปุ่มสีทองด้านล่างเพื่อโหลดโปรไฟล์จำลองสุขภาพทางการแพทย์อัตโนมัติ</strong> เพื่อเห็นบทวิเคราะห์และรายงานสรุปวิเคราะห์ทั้งหมดของระบบ Cozmos ทันที!
           </p>
           {onUpdateDatabase && (
             <button
@@ -318,18 +386,38 @@ const Page1Content = React.memo(({
         </div>
       )}
 
-      {/* 5 KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* ... (เหมือนเดิม) */}
         <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
           <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">สมาชิกครอบครัว</span>
           <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{totalUsers} คน</strong>
           <span className="text-[9px] text-green-600 font-semibold bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">👤 100% บันทึก</span>
         </div>
-        {/* ... สร้างส่วนอื่น ๆ คล้ายกัน */}
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ดัชนีนอนไม่หลับเฉลี่ย</span>
+          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgIsi}</strong>
+          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full inline-block font-sans ${
+            avgIsi > 14 ? 'text-red-600 bg-red-50' : 'text-orange-600 bg-orange-50'
+          }`}>
+            {avgIsi > 14 ? '⚠️ ระดับปานกลาง' : '🟢 ระดับเฝ้าระวัง'}
+          </span>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ความง่วงสะสม ESS</span>
+          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEss}</strong>
+          <span className="text-[9px] text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded-full inline-block font-sans">⚡ ล้าง่วงสะสม</span>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ประสิทธิภาพหลับรวม</span>
+          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgEfficiency}%</strong>
+          <span className="text-[9px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full inline-block font-sans">🟢 รักษาเสถียรภาพ</span>
+        </div>
+        <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm text-center">
+          <span className="text-[10px] text-sleep-blue-500 uppercase tracking-wider block font-light">ระดับเครียดร่างกาย</span>
+          <strong className="text-2xl font-extrabold text-sleep-blue-950 font-mono my-1 block">{avgStress}/10</strong>
+          <span className="text-[9px] text-red-500 bg-red-50 px-2 py-0.5 rounded-full inline-block font-sans">🔴 ผ่อนคลายกล้ามเนื้อ</span>
+        </div>
       </div>
 
-      {/* CBT-I Recommendations Grid */}
       <div className="bg-gradient-to-br from-[#0B1026] to-[#0f173d] text-white p-6 rounded-3xl border border-sleep-gold-400/20 shadow-xl space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-2">
           <div className="space-y-1">
@@ -344,8 +432,8 @@ const Page1Content = React.memo(({
           </span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {cbtiRecommendations.map((rec, idx) => (
-            <div key={`rec-${rec.step}-${rec.title}`} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3 hover:bg-white/10 transition-all relative overflow-hidden group">
+          {cbtiRecommendations.map((rec) => (
+            <div key={`${rec.step}-${rec.title}`} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3 hover:bg-white/10 transition-all relative overflow-hidden group">
               <div className="absolute top-0 right-0 w-24 h-24 bg-sleep-gold-400/5 rounded-full blur-xl group-hover:bg-sleep-gold-400/10 transition"></div>
               <div className="flex items-center justify-between">
                 <span className="text-[10px] text-sleep-gold-300 font-bold bg-sleep-gold-500/10 border border-sleep-gold-400/20 px-2.5 py-1 rounded-lg">
@@ -364,7 +452,6 @@ const Page1Content = React.memo(({
         </div>
       </div>
 
-      {/* Footer summary */}
       <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h5 className="font-semibold text-sm text-sleep-blue-950 flex items-center gap-1">
@@ -385,7 +472,7 @@ const Page1Content = React.memo(({
 });
 Page1Content.displayName = 'Page1Content';
 
-// ----- Main Component -----
+// ---- Main Component ----
 export default function LookerDashboard({ database, activePatientId, onUpdateDatabase }: LookerDashboardProps) {
   const [activePage, setActivePage] = useState<number>(1);
   const [loadingReport, setLoadingReport] = useState(false);
@@ -444,12 +531,119 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     });
   }, [patientDiaries, patientAssessments]);
 
-  // ... (ส่วนอื่น ๆ คำนวณ isiDistData, correlationData, wellnessStatsData, moodData คล้ายเดิม)
+  const isiDistData = useMemo(() => {
+    let normal = 0, mild = 0, moderate = 0, severe = 0;
+    database.assessments.forEach(a => {
+      if (a.isi <= 7) normal++;
+      else if (a.isi <= 14) mild++;
+      else if (a.isi <= 21) moderate++;
+      else severe++;
+    });
+    return [
+      { name: 'ปกติ (0-7)', count: normal, fill: '#4ade80' },
+      { name: 'เล็กน้อย (8-14)', count: mild, fill: '#facc15' },
+      { name: 'ปานกลาง (15-21)', count: moderate, fill: '#fb923c' },
+      { name: 'รุนแรง (22-28)', count: severe, fill: '#f87171' }
+    ].filter(d => d.count > 0);
+  }, [database.assessments]);
 
-  // fetchWeeklyReport (เหมือนเดิม)
+  const correlationData = useMemo(() => {
+    const result: any[] = [];
+    database.sleepDiary.forEach(diary => {
+      const factor = database.dailyFactors.find(f => f.patientId === diary.patientId && f.date === diary.date);
+      const assessment = database.assessments.find(a => a.patientId === diary.patientId);
+      if (factor && assessment) {
+        result.push({
+          stress: factor.stressScore,
+          isi: assessment.isi,
+          caffeine: factor.caffeine,
+          sleepDuration: diary.sleepDuration,
+          screenTime: factor.screenTime,
+          sleepEfficiency: diary.sleepEfficiency,
+          patientId: diary.patientId
+        });
+      }
+    });
+    return result;
+  }, [database.sleepDiary, database.dailyFactors, database.assessments]);
 
-  // render functions
-  const renderPage1 = () => (
+  const wellnessStatsData = useMemo(() => {
+    let whiteSum = 0, rainSum = 0, oceanSum = 0, forestSum = 0, breathingSum = 0, dumpSum = 0;
+    database.wellnessUsage.forEach(w => {
+      whiteSum += w.whiteNoise;
+      rainSum += w.rainSound;
+      oceanSum += w.oceanSound;
+      forestSum += w.forestSound || 0;
+      breathingSum += w.breathingSession;
+      dumpSum += w.brainDump || 0;
+    });
+    return [
+      { name: 'White Noise (นาที)', value: whiteSum, fill: '#f1b32d' },
+      { name: 'ฝนตก (นาที)', value: rainSum, fill: '#3d5a80' },
+      { name: 'คลื่นทะเล (นาที)', value: oceanSum, fill: '#98c1d9' },
+      { name: 'พนาไพร (นาที)', value: forestSum, fill: '#4a6fa5' },
+      { name: 'ฝึกการหายใจ (นาที)', value: breathingSum * 5, fill: '#e9c46a' },
+      { name: 'เขียนทิ้งระเบิดสมอง (นาที)', value: dumpSum * 5, fill: '#2d426b' }
+    ].filter(d => d.value > 0);
+  }, [database.wellnessUsage]);
+
+  const moodData = useMemo(() => {
+    let pos = 0, neu = 0, sad = 0, str = 0;
+    database.journals.forEach(j => {
+      if (j.mood === 'Positive') pos++;
+      else if (j.mood === 'Neutral') neu++;
+      else if (j.mood === 'Sad') sad++;
+      else str++;
+    });
+    return [
+      { name: 'Positive 😊', value: pos, fill: '#4ade80' },
+      { name: 'Neutral 😐', value: neu, fill: '#94a3b8' },
+      { name: 'Sad 😔', value: sad, fill: '#3b82f6' },
+      { name: 'Stress 😫', value: str, fill: '#f87171' }
+    ].filter(d => d.value > 0);
+  }, [database.journals]);
+
+  const fetchWeeklyReport = useCallback(async () => {
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setLoadingReport(true);
+    setAiReport('');
+    setReportError('');
+
+    try {
+      const response = await fetch('/api/gemini/generate-weekly-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientId: activePatientId }),
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data: GeminiReportResponse = await response.json();
+      if (data.error) throw new Error(data.error);
+      setAiReport(data.report || 'ไม่พบสรุปรายงานสำหรับสมาชิกครอบครัวนี้');
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      console.error(err);
+      setReportError('ไม่สามารถเชื่อมต่อกับระบบ AI ได้ในขณะนี้ กรุณาลองอีกครั้งภายหลัง หรือตรวจสอบว่า backend server ทำงานอยู่');
+      if (process.env.NODE_ENV === 'development') {
+        setAiReport('[โหมดพัฒนา] รายงานตัวอย่าง: สมาชิกในครอบครัวมีแนวโน้มความเครียดลดลง 10% เมื่อเทียบกับสัปดาห์ที่ผ่านมา แนะนำฝึกหายใจก่อนนอนอย่างน้อย 5 นาที');
+      }
+    } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      setLoadingReport(false);
+    }
+  }, [activePatientId]);
+
+  useEffect(() => {
+    if (activePage === 6) fetchWeeklyReport();
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, [activePage, activePatientId, fetchWeeklyReport]);
+
+  // Render functions
+  const renderPage1 = useCallback(() => (
     <Page1Content
       database={database}
       activePatientId={activePatientId}
@@ -462,32 +656,245 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
       patientDiaries={patientDiaries}
       onUpdateDatabase={onUpdateDatabase}
     />
-  );
+  ), [database, activePatientId, totalUsers, avgIsi, avgEss, avgEfficiency, avgStress, patientAssessments, patientDiaries, onUpdateDatabase]);
 
-  const renderPage2 = () => {
-    // ... (เหมือนเดิม)
-    return <div>...</div>;
-  };
+  const renderPage2 = useCallback(() => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 2 : สถิติและรายละเอียดพฤติกรรมการนอนในบ้าน</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">แสดงสถิติกราฟเส้นชั่วโมงการนอนและเปรียบเทียบอาการคะแนนประเมินของสมาชิก</p>
+      </div>
+      {sleepAnalyticsData.length === 0 ? (
+        <div className="text-center py-10 bg-white rounded-2xl border border-dashed text-xs text-sleep-blue-600">
+          ไม่มีประวัติการส่งไดอารี่ของสมาชิกคนนี้ ลองจดบันทึกพฤติกรรมก่อนนะครับ
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm">
+            <h5 className="font-semibold text-xs text-sleep-blue-900 mb-3 uppercase tracking-wider text-center">กราฟ 1: ชั่วโมงการนอนรายวัน</h5>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sleepAnalyticsData} margin={{ top: 10, right: 10, left: 15, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis dataKey="dateShort" stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'วันที่ (ดด/วว)', position: 'insideBottom', offset: -10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+                  <YAxis domain={[3, 11]} stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'เวลาหลับ (ชั่วโมง)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+                  <Tooltip formatter={(value) => [`${value} ชั่วโมง`, 'ระยะเวลาการนอน']} />
+                  <Line type="monotone" dataKey="ชั่วโมงการนอน" stroke="#f1b32d" strokeWidth={3} activeDot={{ r: 8 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border border-sleep-blue-100 shadow-sm">
+            <h5 className="font-semibold text-xs text-sleep-blue-900 mb-3 uppercase tracking-wider text-center">กราฟ 2: ดัชนีความเครียดและง่วงนอน (ISI & ESS)</h5>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={sleepAnalyticsData} margin={{ top: 10, right: 10, left: 15, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <XAxis dataKey="dateShort" stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'วันที่ (ดด/วว)', position: 'insideBottom', offset: -10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+                  <YAxis stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'ระดับคะแนน (คะแนน)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+                  <Tooltip formatter={(value, name) => [`${value} คะแนน`, name === 'ISI Trend' ? 'ดัชนีนอนไม่หลับ (ISI)' : 'ความง่วงนอนกลางวัน (ESS)']} />
+                  <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '5px' }} />
+                  <Line type="monotone" dataKey="ISI Trend" stroke="#ef4444" strokeWidth={2} name="คะแนน ISI" />
+                  <Line type="monotone" dataKey="ESS Trend" stroke="#3b82f6" strokeWidth={2} name="คะแนน ESS" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  ), [sleepAnalyticsData]);
 
-  const renderPage3 = () => {
-    // ... ใช้ isiDistData
-  };
+  const renderPage3 = useCallback(() => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 3 : การเฝ้าระวังความรุนแรงนอนไม่หลับ (ISI)</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">สัดส่วนของเกณฑ์คลินิก ISI แยกตามระดับความรุนแรง</p>
+      </div>
+      <div className="bg-white p-5 rounded-3xl border border-sleep-blue-100 shadow-sm">
+        <h5 className="font-semibold text-xs text-sleep-blue-950 mb-4 text-center">เกณฑ์กระจายโรค ISI Scale</h5>
+        <div className="h-64 max-w-lg mx-auto">
+          <ResponsiveContainer width="100%" height="100%">
+            <ReBarChart data={isiDistData} margin={{ top: 15, right: 10, left: 15, bottom: 25 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+              <XAxis dataKey="name" stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'ระดับความรุนแรง (คะแนน ISI)', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+              <YAxis stroke="#64748B" allowDecimals={false} style={{ fontSize: '10px' }} label={{ value: 'จำนวนสมาชิก (คน)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+              <Tooltip formatter={(value) => [`${value} คน`, 'จำนวนครั้งที่คัดกรอง']} />
+              <Bar dataKey="count" radius={[8, 8, 0, 0]}>
+                {isiDistData.map((entry) => (
+                  <Cell key={entry.name} fill={entry.fill} />
+                ))}
+              </Bar>
+            </ReBarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-sleep-blue-50 text-center text-xs">
+          <div><span className="text-green-500 font-extrabold">● ปกติ</span><p className="text-sleep-blue-600">ไม่มีโรคแทรกซ้อน</p></div>
+          <div><span className="text-yellow-500 font-extrabold">● เล็กน้อย</span><p className="text-sleep-blue-600">ความเสี่ยงสุขวิทยา</p></div>
+          <div><span className="text-orange-500 font-extrabold">● ปานกลาง</span><p className="text-sleep-blue-600">รบกวนงานกลางวัน</p></div>
+          <div><span className="text-red-500 font-extrabold">● รุนแรง</span><p className="text-sleep-blue-600">ปัญหานอนติดขัด</p></div>
+        </div>
+      </div>
+    </div>
+  ), [isiDistData]);
 
-  const renderPage4 = () => {
-    // ... ใช้ correlationData
-  };
+  const renderPage4 = useCallback(() => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 4 : ปัจจัยพฤติกรรม (Correlation)</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">ความสัมพันธ์ระหว่างความเครียด คาเฟอีน หน้าจอ กับคุณภาพการนอน</p>
+      </div>
+      {correlationData.length === 0 ? (
+        <div className="text-center py-10 bg-white rounded-2xl border border-dashed text-xs text-sleep-blue-600">
+          ยังไม่มีข้อมูลที่สมบูรณ์สำหรับการวิเคราะห์สหสัมพันธ์ (ต้องการทั้ง sleep diary, daily factors และ assessments)
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">1. ความเครียด vs ISI</h5>
+            <div className="h-48">
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="stress" domain={[0,10]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'ระดับความเครียด (คะแนน)', position: 'insideBottom', offset: -10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <YAxis type="number" dataKey="isi" domain={[0,24]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'ดัชนี ISI (คะแนน)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <Tooltip formatter={(value, name) => [value, name === 'stress' ? 'ระดับความเครียด (คะแนน)' : 'ดัชนีนอนไม่หลับ (ISI)']} />
+                  <Scatter data={correlationData} fill="#ef4444" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">2. คาเฟอีน vs ชั่วโมงนอน</h5>
+            <div className="h-48">
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="caffeine" domain={[0,5]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'ปริมาณคาเฟอีน (แก้ว)', position: 'insideBottom', offset: -10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <YAxis type="number" dataKey="sleepDuration" domain={[3,10]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'เวลาหลับ (ชั่วโมง)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <Tooltip formatter={(value, name) => [value, name === 'caffeine' ? 'คาเฟอีน (แก้ว)' : 'ชั่วโมงการนอน (ชั่วโมง)']} />
+                  <Scatter data={correlationData} fill="#b45309" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="bg-white p-4 rounded-2xl border shadow-sm">
+            <h5 className="font-semibold text-xs text-center mb-2">3. หน้าจอ vs ประสิทธิภาพหลับ</h5>
+            <div className="h-48">
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                  <CartesianGrid stroke="#f1f5f9" />
+                  <XAxis type="number" dataKey="screenTime" domain={[0,8]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'เวลาหน้าจอ (ชั่วโมง)', position: 'insideBottom', offset: -10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <YAxis type="number" dataKey="sleepEfficiency" domain={[50,100]} stroke="#94a3b8" style={{ fontSize: '9px' }} label={{ value: 'ประสิทธิภาพ (%)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 9, fill: '#64748B' } }} />
+                  <Tooltip formatter={(value, name) => [value, name === 'screenTime' ? 'ระยะเวลาใช้หน้าจอ (ชั่วโมง)' : 'ประสิทธิภาพการนอน (%)']} />
+                  <Scatter data={correlationData} fill="#3b82f6" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  ), [correlationData]);
 
-  const renderPage5 = () => {
-    // ... ใช้ wellnessStatsData
-  };
+  const renderPage5 = useCallback(() => (
+    <div className="space-y-6">
+      <div className="border-b border-sleep-blue-100 pb-3">
+        <h4 className="font-semibold text-lg text-sleep-blue-900">หน้า 5 : สถิติการใช้งานเครื่องมือบำบัดนอนหลับ</h4>
+        <p className="text-xs text-sleep-blue-500 font-light">ปริมาณนาทีและจำนวนครั้งของการฝึกหายใจ เสียงคลื่น ฯลฯ</p>
+      </div>
+      <div className="bg-white p-5 rounded-3xl border shadow-sm">
+        <h5 className="font-semibold text-xs text-center mb-4">สัดส่วนนาทีรักษาสมดุล</h5>
+        <div className="h-64">
+          <ResponsiveContainer>
+            <ReBarChart data={wellnessStatsData} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+              <XAxis type="number" stroke="#64748B" style={{ fontSize: '10px' }} label={{ value: 'เวลาใช้งานสะสม (นาที)', position: 'insideBottom', offset: -10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+              <YAxis type="category" dataKey="name" width={150} stroke="#64748B" style={{ fontSize: '10px' }} />
+              <Tooltip formatter={(value) => [`${value} นาที`, 'เวลาที่ใช้']} />
+              <Bar dataKey="value" radius={[0,6,6,0]}>
+                {wellnessStatsData.map(entry => (
+                  <Cell key={entry.name} fill={entry.fill} />
+                ))}
+              </Bar>
+            </ReBarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  ), [wellnessStatsData]);
 
-  const renderPage6 = () => {
-    // ... ใช้ moodData และ fetchWeeklyReport
-  };
+  const renderPage6 = useCallback(() => (
+    <div className="space-y-6">
+      <div className="border-b pb-3 flex flex-col sm:flex-row justify-between gap-4">
+        <div>
+          <h4 className="font-semibold text-lg">หน้า 6 : AI Reflection รายงานอัจฉริยะ</h4>
+          <p className="text-xs text-sleep-blue-500">ตรวจจับแนวโน้มอารมณ์และให้คำปรึกษาจาก Gemini LLM</p>
+        </div>
+        <button
+          onClick={fetchWeeklyReport}
+          disabled={loadingReport}
+          aria-label="ขอรายงาน AI ใหม่"
+          className="bg-sleep-blue-900 hover:bg-sleep-blue-800 text-white text-xs font-semibold px-3 py-1.5 rounded-xl inline-flex items-center gap-1 shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loadingReport ? 'animate-spin' : ''}`} />
+          ขอรายงานใหม่
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-4 rounded-2xl border shadow-sm text-center">
+          <h5 className="font-semibold text-xs mb-2">สัดส่วนอารมณ์ไดอารี่</h5>
+          <div className="h-40 w-full">
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={moodData} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={3} dataKey="value">
+                  {moodData.map(entry => (
+                    <Cell key={entry.name} fill={entry.fill} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => [`${value} บันทึก`, 'จำนวน']} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] pt-2 border-t mt-2">
+            {moodData.map(m => (
+              <div key={m.name}>{m.name}</div>
+            ))}
+          </div>
+        </div>
+        <div className="bg-sleep-gold-50 border border-sleep-gold-300 p-5 rounded-3xl col-span-2 space-y-4">
+          <div className="flex justify-between items-center">
+            <h5 className="font-semibold text-sm flex items-center gap-1">
+              <Sparkles className="w-4 h-4 text-sleep-gold-500" />
+              COZMOS WEEKLY AI REPORT
+            </h5>
+            <span className="text-[10px] bg-sleep-blue-900 text-white px-2 py-0.5 rounded">อัจฉริยะ</span>
+          </div>
+          {loadingReport ? (
+            <div className="py-10 text-center">
+              <Compass className="w-8 h-8 animate-spin mx-auto text-sleep-blue-900" />
+              <p className="text-xs mt-2">กำลังประมวลผลรายงานประจำสัปดาห์...</p>
+            </div>
+          ) : reportError ? (
+            <div className="p-3 bg-red-50 border border-red-200 text-xs text-red-500 rounded-xl flex gap-2">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{reportError}</span>
+            </div>
+          ) : (
+            <div className="text-xs text-sleep-blue-950 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap space-y-2">
+              {aiReport || 'ยังไม่มีรายงาน กดปุ่ม "ขอรายงานใหม่" เพื่อสร้างรายงานจากข้อมูลล่าสุด'}
+            </div>
+          )}
+          <div className="text-[9px] text-sleep-blue-600 italic">
+            *รายงานอิงจากข้อมูลการนอน ความเครียด และไดอารี่ของสมาชิกรหัส {activePatientId}
+          </div>
+        </div>
+      </div>
+    </div>
+  ), [loadingReport, reportError, aiReport, moodData, fetchWeeklyReport, activePatientId]);
 
   return (
     <div className="space-y-6" id="looker-dashboard">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl md:text-3xl font-semibold text-sleep-blue-900 flex items-center gap-2">
@@ -501,9 +908,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
               key={`nav-${page}`}
               onClick={() => setActivePage(page)}
               className={`px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                activePage === page 
-                  ? 'bg-sleep-gold-500 text-[#0B1026] shadow' 
-                  : 'hover:bg-white/10'
+                activePage === page ? 'bg-sleep-gold-500 text-[#0B1026] shadow' : 'hover:bg-white/10'
               }`}
             >
               หน้า {page}
@@ -512,7 +917,6 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
         </div>
       </div>
 
-      {/* Main Canvas */}
       <div className="bg-white border-3 border-sleep-blue-900 rounded-3xl overflow-hidden shadow-lg min-h-[480px]">
         <div className="bg-sleep-blue-900 text-white p-4 px-6 flex justify-between items-center flex-col sm:flex-row gap-3 border-b border-sleep-blue-900">
           <div className="flex items-center gap-2">
