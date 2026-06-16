@@ -47,6 +47,7 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
 
   const [isSpeaking, setIsSpeaking] = useState(false);
   const synthRef = useRef<SpeechSynthesis | null>(null);
+  const activeUtterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
 
   // Initialize Speech Synthesis
   useEffect(() => {
@@ -65,42 +66,87 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
     if (synthRef.current) {
       synthRef.current.cancel();
       setIsSpeaking(false);
+      activeUtterancesRef.current = [];
     }
   }, [activePage, activePatientId]);
+
+  const splitTextIntoSentences = (text: string): string[] => {
+    const parts = text.split(/[\n,。．\.。、\s]+/);
+    const chunks: string[] = [];
+    let currentChunk = "";
+    
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      
+      if (currentChunk.length + trimmed.length > 120) {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+        }
+        currentChunk = trimmed;
+      } else {
+        currentChunk = currentChunk ? currentChunk + " " + trimmed : trimmed;
+      }
+    }
+    if (currentChunk) {
+      chunks.push(currentChunk);
+    }
+    return chunks;
+  };
 
   const handleSpeakTts = (textToSpeak: string) => {
     if (!synthRef.current) return;
 
     if (isSpeaking) {
       synthRef.current.cancel();
+      if (synthRef.current.paused) {
+        synthRef.current.resume();
+      }
       setIsSpeaking(false);
+      activeUtterancesRef.current = [];
       return;
     }
 
     synthRef.current.cancel();
     
-    // Clean text
-    const cleanText = textToSpeak.replace(/[#*`_]/g, '');
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    
-    // Config Thai Voice if possible
-    const voices = synthRef.current.getVoices();
-    const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
-    if (thVoice) {
-      utterance.voice = thVoice;
-    }
-    utterance.lang = 'th-TH';
-    utterance.rate = 1.05; // natural and clear cadence
-
-    utterance.onend = () => {
-      setIsSpeaking(false);
-    };
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-    };
+    const cleanText = textToSpeak.replace(/[#*`_~]/g, '');
+    const chunks = splitTextIntoSentences(cleanText);
+    const utterances: SpeechSynthesisUtterance[] = [];
 
     setIsSpeaking(true);
-    synthRef.current.speak(utterance);
+
+    chunks.forEach((chunk, index) => {
+      const u = new SpeechSynthesisUtterance(chunk);
+      u.lang = 'th-TH';
+      u.rate = 1.05;
+
+      const voices = synthRef.current?.getVoices() || [];
+      const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
+      if (thVoice) {
+        u.voice = thVoice;
+      }
+
+      if (index === chunks.length - 1) {
+        u.onend = () => {
+          setIsSpeaking(false);
+          activeUtterancesRef.current = [];
+        };
+      }
+      u.onerror = (e) => {
+        console.error("Speech dashboard error:", e);
+        setIsSpeaking(false);
+        activeUtterancesRef.current = [];
+      };
+      utterances.push(u);
+    });
+
+    activeUtterancesRef.current = utterances;
+
+    if (synthRef.current.paused) {
+      synthRef.current.resume();
+    }
+
+    utterances.forEach(u => synthRef.current?.speak(u));
   };
 
   const handleLoadDemoData = () => {
@@ -470,15 +516,20 @@ export default function LookerDashboard({ database, activePatientId, onUpdateDat
 
         {/* Dynamic Voice Wave Visualizer when speaking */}
         {isSpeaking && (
-          <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-3 flex items-center justify-between gap-4 animate-fade-in">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-sleep-gold-500 animate-ping"></span>
-              <span className="text-xs font-semibold text-sleep-blue-950 font-sans">
-                โค้ชเสียงบำบัดส่วนบุคคล Cozmos กำลังพูดคุยกับคุณ <strong className="text-sleep-blue-900">{patientName}</strong>...
+          <div className="bg-sleep-gold-50/80 border border-sleep-gold-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in space-y-2 sm:space-y-0">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-sleep-gold-500 animate-ping"></span>
+                <span className="text-xs font-semibold text-sleep-blue-950 font-sans">
+                  โค้ชเสียงบำบัดส่วนบุคคล Cozmos กำลังพูดคุยกับคุณ <strong className="text-sleep-blue-900">{patientName}</strong>...
+                </span>
+              </div>
+              <span className="text-[10px] text-amber-700 font-normal mt-1 block">
+                ℹ️ สำหรับผู้ใช้ iPhone/iPad: หากไม่ได้ยินเสียง กรุณากดปุ่มเปิดเสียงด้านข้างโทรศัพท์ (ดึงแถบปิดเสียงขึ้น) และเพิ่มระดับเสียงขึ้นด้วยนะคะ
               </span>
             </div>
             {/* Minimal sound wave bars */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 justify-end">
               {[1, 2, 3, 4, 5, 4, 3, 2, 1, 3, 4, 2].map((height, i) => (
                 <div
                   key={i}
