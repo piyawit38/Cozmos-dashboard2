@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import app from "../server.js";
+// @ts-ignore
+import compiledApp from "../dist/server.cjs";
+
+// Handle ESM/CommonJS default export interop
+const app = compiledApp && compiledApp.default ? compiledApp.default : compiledApp;
 
 export default app;
