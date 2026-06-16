@@ -171,7 +171,7 @@ export default function AIReflection({
 
   const handleAnalyzeAndSave = async () => {
     if (!journalText.trim()) {
-      setErrorText('กรุณากรอกหรือบันทึกเสียงไดอารี่ระบายจิตวิญญาณก่อนกดส่งเพื่อวิเคราะห์นะครับ');
+      setErrorText('กรุณากรอกหรือบันทึกเสียงไดอารี่ระบายความในใจก่อนกดส่งเพื่อวิเคราะห์นะครับ');
       return;
     }
 
@@ -195,6 +195,10 @@ export default function AIReflection({
         })
       });
 
+      if (!resp.ok) {
+        throw new Error(`เซิร์ฟเวอร์ส่งคืนรหัสข้อผิดพลาด HTTP ${resp.status}`);
+      }
+
       const data = await resp.json();
       if (data.error) throw new Error(data.error);
 
@@ -217,7 +221,7 @@ export default function AIReflection({
       setUsedVoice(false);
     } catch (err: any) {
       console.error(err);
-      setErrorText('เกิดปัญหาทางเครือข่ายวิญญาณ Gemini รบกวนทดลองใหม่อีกครั่ง');
+      setErrorText(`เกิดข้อผิดพลาดในการเชื่อมต่อระบบประมวลผลอัจฉริยะ Gemini (สาเหตุ: ${err.message || 'การเชื่อมต่อเครือข่ายขัดข้อง'}) กรุณาทดลองใหม่อีกครั้งครับ`);
     } finally {
       setIsAnalyzing(false);
     }
