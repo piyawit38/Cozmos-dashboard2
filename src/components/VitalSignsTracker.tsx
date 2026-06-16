@@ -114,13 +114,16 @@ export default function VitalSignsTracker({ patientId, existingVitals, onSave }:
             ) : (
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
+                  <LineChart data={chartData} margin={{ top: 15, right: 20, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis yAxisId="left" domain={[50, 200]} />
-                    <YAxis yAxisId="right" orientation="right" domain={[50, 300]} />
-                    <Tooltip />
-                    <Legend />
+                    <XAxis dataKey="date" label={{ value: 'วันที่ (เดือน-วัน)', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+                    <YAxis yAxisId="left" domain={[50, 220]} label={{ value: 'ความดันโลหิต (mmHg)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#ef4444', fontWeight: 'bold' } }} />
+                    <YAxis yAxisId="right" orientation="right" domain={[50, 420]} label={{ value: 'แล็บชีวเคมี (mg/dL)', angle: 90, position: 'insideRight', offset: 10, style: { fontSize: 10, fill: '#3b82f6', fontWeight: 'bold' } }} />
+                    <Tooltip formatter={(value, name) => {
+                      if (name === "ความดันบน" || name === "ความดันล่าง") return [`${value} mmHg`, name];
+                      return [`${value} mg/dL`, name];
+                    }} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                     <Line yAxisId="left" type="monotone" dataKey="systolic" stroke="#ef4444" name="ความดันบน" strokeWidth={2} />
                     <Line yAxisId="left" type="monotone" dataKey="diastolic" stroke="#f97316" name="ความดันล่าง" strokeWidth={2} />
                     <Line yAxisId="right" type="monotone" dataKey="bloodSugar" stroke="#3b82f6" name="น้ำตาล" strokeWidth={2} />
