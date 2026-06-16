@@ -186,63 +186,44 @@ export default function SleepScreening({
 
       setIsSpeaking(true);
 
-      // Run sequential speech loop manually to bypass iOS Safari's queues hanging bug
-      let currentIndex = 0;
+      const utterances: SpeechSynthesisUtterance[] = [];
       activeUtterancesRef.current = [];
 
-      const speakNextChunk = () => {
-        if (!synthRef.current || currentIndex >= chunks.length || !isSpeaking) {
-          setIsSpeaking(false);
-          activeUtterancesRef.current = [];
-          return;
-        }
-
-        const chunkText = chunks[currentIndex];
+      chunks.forEach((chunkText, index) => {
         const u = new SpeechSynthesisUtterance(chunkText);
         u.lang = 'th-TH';
         u.rate = 1.0;
 
-        const voices = synthRef.current.getVoices() || [];
+        const voices = synthRef.current?.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        u.onend = () => {
-          currentIndex++;
-          // Small safety timeout to prevent mobile engines from hanging
-          setTimeout(() => {
-            speakNextChunk();
-          }, 30);
-        };
+        if (index === chunks.length - 1) {
+          u.onend = () => {
+            setIsSpeaking(false);
+            activeUtterancesRef.current = [];
+          };
+        }
 
         u.onerror = (e) => {
           console.error("Speech chunk execution error:", e);
-          // Play next in line anyway, or stop if canceled
           if (e.error !== 'interrupted') {
-            currentIndex++;
-            setTimeout(() => {
-              speakNextChunk();
-            }, 30);
-          } else {
             setIsSpeaking(false);
             activeUtterancesRef.current = [];
           }
         };
 
-        activeUtterancesRef.current = [u];
-        
-        // Ensure not in pause state
-        if (synthRef.current.paused) {
-          synthRef.current.resume();
-        }
-        synthRef.current.speak(u);
-      };
+        utterances.push(u);
+      });
 
-      // iOS Safe trigger delay after canceling previous queue
-      setTimeout(() => {
-        speakNextChunk();
-      }, 80);
+      activeUtterancesRef.current = utterances;
+
+      // Queue all utterances synchronously within user-trigger block to completely satisfy mobile security model
+      utterances.forEach(u => {
+        synthRef.current?.speak(u);
+      });
     }
   }, [aiAdvice, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
 
@@ -337,60 +318,44 @@ export default function SleepScreening({
 
       setIsSpeakingEval(true);
 
-      // Run sequential speech loop manually to bypass iOS Safari's queues hanging bug
-      let currentIndex = 0;
+      const utterances: SpeechSynthesisUtterance[] = [];
       activeUtterancesRef.current = [];
 
-      const speakNextChunk = () => {
-        if (!synthRef.current || currentIndex >= chunks.length || !isSpeakingEval) {
-          setIsSpeakingEval(false);
-          activeUtterancesRef.current = [];
-          return;
-        }
-
-        const chunkText = chunks[currentIndex];
+      chunks.forEach((chunkText, index) => {
         const u = new SpeechSynthesisUtterance(chunkText);
         u.lang = 'th-TH';
         u.rate = 1.05;
 
-        const voices = synthRef.current.getVoices() || [];
+        const voices = synthRef.current?.getVoices() || [];
         const thVoice = voices.find(v => v.lang.includes('th') || v.lang === 'th-TH');
         if (thVoice) {
           u.voice = thVoice;
         }
 
-        u.onend = () => {
-          currentIndex++;
-          setTimeout(() => {
-            speakNextChunk();
-          }, 30);
-        };
+        if (index === chunks.length - 1) {
+          u.onend = () => {
+            setIsSpeakingEval(false);
+            activeUtterancesRef.current = [];
+          };
+        }
 
         u.onerror = (e) => {
           console.error("Speech eval chunk instruction error:", e);
           if (e.error !== 'interrupted') {
-            currentIndex++;
-            setTimeout(() => {
-              speakNextChunk();
-            }, 30);
-          } else {
             setIsSpeakingEval(false);
             activeUtterancesRef.current = [];
           }
         };
 
-        activeUtterancesRef.current = [u];
-        
-        if (synthRef.current.paused) {
-          synthRef.current.resume();
-        }
-        synthRef.current.speak(u);
-      };
+        utterances.push(u);
+      });
 
-      // iOS Safe trigger delay after canceling previous queue
-      setTimeout(() => {
-        speakNextChunk();
-      }, 80);
+      activeUtterancesRef.current = utterances;
+
+      // Queue all utterances synchronously within user-trigger block to completely satisfy mobile security model
+      utterances.forEach(u => {
+        synthRef.current?.speak(u);
+      });
     }
   }, [isiAnswers, essAnswers, stopBangAnswers, isSpeaking, isSpeakingEval, splitTextIntoSentences, unlockAudioRef]);
 
