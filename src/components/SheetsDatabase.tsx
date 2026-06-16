@@ -180,7 +180,7 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
   }, [activeSheet, database, searchQuery]);
 
   // ---------- Chart data helpers ----------
-  const getChartDataBySheet = () => {
+  const getChartDataBySheet = (): any[] => {
     switch (activeSheet) {
       case 'users':
         return database.users.map(u => ({ name: getDisplayName(u.patientId), 'ดัชนี BMI': u.bmi }));
@@ -231,6 +231,18 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
     }
   };
 
+  const getChartTitle = () => {
+    switch (activeSheet) {
+      case 'users': return '📊 กราฟวิเคราะห์ดัชนีมวลกาย (BMI) ของสมาชิกกลุ่มเป้าหมาย';
+      case 'sleepDiary': return '📊 กราฟสืบค้นชั่วโมงการนอนและอัตราประสิทธิภาพการนอนหลับสะสม';
+      case 'dailyFactors': return '📊 กราฟแนวโน้มความสัมพันธ์ของความเครียด สกรีนไทม์ และการงีบหลับ';
+      case 'assessments': return '📊 กราฟแท่งจำแนกลักษณะคะแนนคัดกรองโรค (ISI, ESS และ STOP-BANG)';
+      case 'wellnessUsage': return '📊 กราฟวิเคราะห์สัดส่วนเวลาที่ใช้กับเสียงผ่อนคลายและสมาธิบำบัด';
+      case 'journals': return '📊 แผนภูมิสัดส่วนแนวโน้มอารมณ์ความรู้สึกจากหน้าบันทึกสุขภาพจิต';
+      default: return '📊 ภาพรวมสถิติเชิงปริมาณ';
+    }
+  };
+
   const renderChartBySheet = () => {
     const chartData = getChartDataBySheet();
     if (chartData.length === 0) {
@@ -239,11 +251,11 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
 
     if (activeSheet === 'users') {
       return (
-        <ReBarChart data={chartData}>
+        <ReBarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 25 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" />
-          <YAxis domain={[0, 40]} />
-          <Tooltip />
+          <XAxis dataKey="name" style={{ fontSize: 10 }} label={{ value: 'รายชื่อสมาชิกในโปรไฟล์', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <YAxis domain={[0, 40]} style={{ fontSize: 10 }} label={{ value: 'ดัชนีมวลกาย BMI (kg/m²)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <Tooltip formatter={(value) => [`${value} kg/m²`, 'ดัชนี BMI']} />
           <Bar dataKey="ดัชนี BMI" fill="#1e293b" radius={[6,6,0,0]}>
             {chartData.map((entry: any, idx) => (
               <Cell key={idx} fill={entry['ดัชนี BMI'] >= 25 ? '#ef4444' : '#f59e0b'} />
@@ -254,13 +266,16 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
     }
     if (activeSheet === 'sleepDiary') {
       return (
-        <ReLineChart data={chartData}>
+        <ReLineChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 25 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="label" tick={{ fontSize: 8 }} />
-          <YAxis yAxisId="left" domain={[0,12]} />
-          <YAxis yAxisId="right" orientation="right" domain={[0,100]} />
-          <Tooltip />
-          <Legend />
+          <XAxis dataKey="label" tick={{ fontSize: 8 }} label={{ value: 'ชื่อสมาชิกประจำวันเป้าหมาย', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <YAxis yAxisId="left" domain={[0,12]} style={{ fontSize: 10 }} label={{ value: 'เวลาหลับ (ชั่วโมง)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#10b981', fontWeight: 'bold' } }} />
+          <YAxis yAxisId="right" orientation="right" domain={[0,100]} style={{ fontSize: 10 }} label={{ value: 'ประสิทธิภาพการนอน (%)', angle: 90, position: 'insideRight', offset: 15, style: { fontSize: 10, fill: '#3b82f6', fontWeight: 'bold' } }} />
+          <Tooltip formatter={(value, name) => {
+            if (name === "ชั่วโมงนอน") return [`${value} ชั่วโมง`, name];
+            return [`${value}%`, name];
+          }} />
+          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
           <Line yAxisId="left" type="monotone" name="ชั่วโมงนอน" dataKey="ชั่วโมงนอน" stroke="#10b981" strokeWidth={3} />
           <Line yAxisId="right" type="monotone" name="ประสิทธิภาพ (%)" dataKey="ประสิทธิภาพ (%)" stroke="#3b82f6" />
         </ReLineChart>
@@ -268,13 +283,17 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
     }
     if (activeSheet === 'dailyFactors') {
       return (
-        <ReLineChart data={chartData}>
+        <ReLineChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 25 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="label" tick={{ fontSize: 8 }} />
-          <YAxis yAxisId="left" domain={[0,10]} />
-          <YAxis yAxisId="right" orientation="right" domain={[0,120]} />
-          <Tooltip />
-          <Legend />
+          <XAxis dataKey="label" tick={{ fontSize: 8 }} label={{ value: 'ชื่อสมาชิกและวันประเมิน', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <YAxis yAxisId="left" domain={[0,10]} style={{ fontSize: 10 }} label={{ value: 'ความเครียด / สกรีนไทม์ (ระดับ/ชม.)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#ef4444', fontWeight: 'bold' } }} />
+          <YAxis yAxisId="right" orientation="right" domain={[0,120]} style={{ fontSize: 10 }} label={{ value: 'ระยะงีบหลับกลางวัน (นาที)', angle: 90, position: 'insideRight', offset: 15, style: { fontSize: 10, fill: '#8b5cf6', fontWeight: 'bold' } }} />
+          <Tooltip formatter={(value, name) => {
+            if (name === "ความเครียด (0-10)") return [`${value} / 10 คะแนน`, "ระดับความเครียด"];
+            if (name === "หน้าจอ (ชม.)") return [`${value} ชั่วโมง`, "ความถี่สกรีนไทม์"];
+            return [`${value} นาที`, "เวลางีบหลับ"];
+          }} />
+          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
           <Line yAxisId="left" type="monotone" name="ความเครียด" dataKey="ความเครียด (0-10)" stroke="#ef4444" />
           <Line yAxisId="left" type="monotone" name="หน้าจอ (ชม.)" dataKey="หน้าจอ (ชม.)" stroke="#f59e0b" />
           <Line yAxisId="right" type="monotone" name="งีบ (นาที)" dataKey="งีบ (นาที)" stroke="#8b5cf6" strokeDasharray="5 5" />
@@ -283,43 +302,43 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
     }
     if (activeSheet === 'assessments') {
       return (
-        <ReBarChart data={chartData}>
+        <ReBarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 25 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" />
-          <YAxis domain={[0,30]} />
-          <Tooltip />
-          <Legend />
-          <Bar dataKey="ดัชนีหลับยาก (ISI)" fill="#f59e0b" />
-          <Bar dataKey="อาการง่วงกลางวัน (ESS)" fill="#3b82f6" />
-          <Bar dataKey="ความเสี่ยงหยุดหายใจ (STOP-BANG)" fill="#ef4444" />
+          <XAxis dataKey="name" style={{ fontSize: 10 }} label={{ value: 'รายชื่อสมาชิกครอบครัว', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <YAxis domain={[0,30]} style={{ fontSize: 10 }} label={{ value: 'ระดับคะแนนรวมที่ประเมินได้', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <Tooltip formatter={(value, name) => [`${value} คะแนน`, name]} />
+          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+          <Bar dataKey="ดัชนีหลับยาก (ISI)" fill="#f59e0b" name="คะแนน ISI (0-28)" />
+          <Bar dataKey="อาการง่วงกลางวัน (ESS)" fill="#3b82f6" name="คะแนน ESS (0-24)" />
+          <Bar dataKey="ความเสี่ยงหยุดหายใจ (STOP-BANG)" fill="#ef4444" name="คะแนน STOP-BANG (0-8)" />
         </ReBarChart>
       );
     }
     if (activeSheet === 'wellnessUsage') {
       return (
-        <ReBarChart data={chartData}>
+        <ReBarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 25 }}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="label" tick={{ fontSize: 8 }} />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Bar dataKey="สมาธิ/หายใจ (นาที)" stackId="a" fill="#3b82f6" />
-          <Bar dataKey="เสียงฝน" stackId="a" fill="#10b981" />
-          <Bar dataKey="คลื่นทะเล" stackId="a" fill="#ec4899" />
-          <Bar dataKey="ไวท์นอยส์" stackId="a" fill="#f59e0b" />
+          <XAxis dataKey="label" tick={{ fontSize: 8 }} label={{ value: 'ชื่อสมาชิกและวันทำกิจกรรม', position: 'insideBottom', offset: -15, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <YAxis style={{ fontSize: 10 }} label={{ value: 'ระยะเวลาบำบัดรวม (นาที)', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 10, fill: '#64748B', fontWeight: 'bold' } }} />
+          <Tooltip formatter={(value, name) => [`${value} นาที`, name]} />
+          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+          <Bar dataKey="สมาธิ/หายใจ (นาที)" stackId="a" fill="#3b82f6" name="ฝึกสมาธิ/หายใจ" />
+          <Bar dataKey="เสียงฝน" stackId="a" fill="#10b981" name="คลื่นเสียงฝน" />
+          <Bar dataKey="คลื่นทะเล" stackId="a" fill="#ec4899" name="คลื่นเสียงทะเล" />
+          <Bar dataKey="ไวท์นอยส์" stackId="a" fill="#f59e0b" name="เสียงส้ม/ขาว (White Noise)" />
         </ReBarChart>
       );
     }
     if (activeSheet === 'journals') {
       return (
         <RePieChart>
-          <Pie data={chartData} dataKey="value" nameKey="name" label>
+          <Pie data={chartData} dataKey="value" nameKey="name" label={(entry) => `${entry.name}: ${entry.value} ครั้ง`}>
             {chartData.map((entry, idx) => (
               <Cell key={`cell-${idx}`} fill={entry.fill} />
             ))}
           </Pie>
-          <Tooltip />
-          <Legend />
+          <Tooltip formatter={(value) => [`${value} ครั้ง`, 'ความถี่สภาวะอารมณ์']} />
+          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
         </RePieChart>
       );
     }
@@ -495,7 +514,7 @@ export default function SheetsDatabase({ database, onUpdateDatabase }: SheetsDat
       <div className="bg-white border border-sleep-blue-100 rounded-3xl p-6 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <Sparkles className="w-5 h-5 text-sleep-gold-500" />
-          <h3 className="text-sm font-semibold text-sleep-blue-900">📊 ภาพรวมสถิติเชิงปริมาณ</h3>
+          <h3 className="text-sm font-semibold text-sleep-blue-900">{getChartTitle()}</h3>
         </div>
         <div className="h-64 w-full bg-sleep-cream/40 rounded-2xl p-4 border border-sleep-blue-100">
           <ResponsiveContainer width="100%" height="100%">
