@@ -1,6 +1,13 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/((?!api/|_next/|static/|favicon.ico|manifest.json|robots.txt).*)", "destination": "/index.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/((?!api/|assets/|favicon.ico|_next/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
